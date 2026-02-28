@@ -476,7 +476,15 @@ class RatingChangesCache:
         # Sort by the rating update time of the first change in the list of changes, assuming
         # every change in the list has the same time.
         contest_changes_pairs.sort(key=lambda pair: pair[1][0].ratingUpdateTimeSeconds)
-        await self._save_changes(contest_changes_pairs)
+        
+        # Save one contest at a time, yielding to the event loop in between to keep heartbeat alive
+        for pair in contest_changes_pairs:
+            await self._save_changes([pair], refresh_cache=False)
+            await asyncio.sleep(0.1)
+            
+        if contest_changes_pairs:
+            await self._refresh_handle_cache()
+
         for contest, changes in contest_changes_pairs:
             cf_common.event_sys.dispatch(events.RatingChangesUpdate, contest=contest,
                                          rating_changes=changes)
@@ -484,7 +492,7 @@ class RatingChangesCache:
     async def _fetch(self, contests, auto_save=True):
         all_changes = []
         batch = []
-        BATCH_SIZE = 5
+        BATCH_SIZE = 1 # Lowered to 1 to prevent massive blocking writes
 
         for contest in contests:
             try:
@@ -498,39 +506,51 @@ class RatingChangesCache:
                     if auto_save:
                         batch.append(pair)
                         if len(batch) >= BATCH_SIZE:
-                            await self._save_changes(batch)
+                            # Save without rebuilding the entire dictionary cache yet
+                            await self._save_changes(batch, refresh_cache=False)
                             batch = []
+                            # Yield explicitly so Discord can send its heartbeat
+                            await asyncio.sleep(0.1)
 
             except cf.CodeforcesApiError as er:
                 self.logger.warning(f'Fetch rating changes failed for contest {contest.id}, ignoring. {er!r}')
                 pass
         
-        # Save any final remaining partial batch
-        if auto_save and batch:
-            await self._save_changes(batch)
+        if auto_save:
+            # Save any final remaining partial batch
+            if batch:
+                await self._save_changes(batch, refresh_cache=False)
+            
+            # Rebuild the dictionary ONCE at the very end
+            await self._refresh_handle_cache()
 
         return all_changes
 
-    async def _save_changes(self, contest_changes_pairs):
+    async def _save_changes(self, contest_changes_pairs, refresh_cache=True):
         flattened = [change for _, changes in contest_changes_pairs for change in changes]
         if not flattened:
             return
             
-        # Offload synchronous database insert to a background thread
-        rc = await asyncio.to_thread(self.cache_master.conn.save_rating_changes, flattened)
+        rc = self.cache_master.conn.save_rating_changes(flattened)
         self.logger.info(f'Saved {rc} changes to database.')
-        await self._refresh_handle_cache()
+        
+        if refresh_cache:
+            await self._refresh_handle_cache()
 
     async def _refresh_handle_cache(self):
-        def _build_cache():
-            changes = self.cache_master.conn.get_all_rating_changes()
-            handle_rating_cache = {}
-            for change in changes:
-                handle_rating_cache[change.handle] = change.newRating
-            return handle_rating_cache
-            
-        # Offload synchronous database read and dictionary building to a background thread
-        handle_rating_cache = await asyncio.to_thread(_build_cache)
+        # Synchronous DB read
+        changes = self.cache_master.conn.get_all_rating_changes()
+        
+        # Yield to event loop immediately after the heavy read
+        await asyncio.sleep(0.1)
+        
+        handle_rating_cache = {}
+        for i, change in enumerate(changes):
+            handle_rating_cache[change.handle] = change.newRating
+            # Yield every 50,000 iterations so building the dict doesn't lock the CPU
+            if i > 0 and i % 50000 == 0:
+                await asyncio.sleep(0)
+                
         self.handle_rating_cache = handle_rating_cache
         self.logger.info(f'Ratings for {len(handle_rating_cache)} handles cached')
 
