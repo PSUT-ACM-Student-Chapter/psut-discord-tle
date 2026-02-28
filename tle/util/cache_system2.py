@@ -164,8 +164,6 @@ class ContestCache:
 class ProblemCache:
     _RELOAD_INTERVAL = 6 * 60 * 60
 
-    
-
     def __init__(self, cache_master):
         self.cache_master = cache_master
 
@@ -342,7 +340,7 @@ class ProblemsetCache:
     async def _fetch_for_contest(self, contest_id):
         try:
             contest, problemset, _ = await cf.contest.standings(contest_id=contest_id, from_=1,
-                                                          count=1)
+                                                                count=1)
             
             divisions = [div_tag for div_tag in _DIV_TAGS if contest.matches([div_tag])] 
 
@@ -399,9 +397,12 @@ class RatingChangesCache:
     async def fetch_contest(self, contest_id):
         """Fetch rating changes for a particular contest. Intended for manual trigger."""
         contest = self.cache_master.contest_cache.contest_by_id[contest_id]
-        changes = await self._fetch([contest])
+        
+        # We MUST clear previous rating changes before we start fetching, 
+        # since _fetch now auto-saves during the process.
         self.cache_master.conn.clear_rating_changes(contest_id=contest_id)
-        self._save_changes(changes)
+        
+        changes = await self._fetch([contest], auto_save=True)
         return len(changes)
 
     async def fetch_all_contests(self):
@@ -417,9 +418,9 @@ class RatingChangesCache:
             contest for contest in contests if not self.has_rating_changes_saved(contest.id)]
         total_changes = 0
         for contests_chunk in paginator.chunkify(contests, _CONTESTS_PER_BATCH_IN_CACHE_UPDATES):
-            contests_chunk = await self._fetch(contests_chunk)
-            self._save_changes(contests_chunk)
-            total_changes += len(contests_chunk)
+            # _fetch auto_saves by default now, so we don't call self._save_changes(contests_chunk)
+            fetched_chunk = await self._fetch(contests_chunk, auto_save=True)
+            total_changes += len(fetched_chunk)
         return total_changes
 
     def is_newly_finished_without_rating_changes(self, contest):
@@ -469,7 +470,9 @@ class RatingChangesCache:
             await self._monitor_task.stop()
             return
 
-        contest_changes_pairs = await self._fetch(self.monitored_contests)
+        # Turn auto_save OFF here because we MUST sort before saving to the database
+        contest_changes_pairs = await self._fetch(self.monitored_contests, auto_save=False)
+        
         # Sort by the rating update time of the first change in the list of changes, assuming
         # every change in the list has the same time.
         contest_changes_pairs.sort(key=lambda pair: pair[1][0].ratingUpdateTimeSeconds)
@@ -478,17 +481,34 @@ class RatingChangesCache:
             cf_common.event_sys.dispatch(events.RatingChangesUpdate, contest=contest,
                                          rating_changes=changes)
 
-    async def _fetch(self, contests):
+    async def _fetch(self, contests, auto_save=True):
         all_changes = []
+        batch = []
+        BATCH_SIZE = 5
+
         for contest in contests:
             try:
                 changes = await cf.contest.ratingChanges(contest_id=contest.id)
                 self.logger.info(f'{len(changes)} rating changes fetched for contest {contest.id}')
                 if changes:
-                    all_changes.append((contest, changes))
+                    pair = (contest, changes)
+                    all_changes.append(pair)
+
+                    # Trigger batched saving if enabled
+                    if auto_save:
+                        batch.append(pair)
+                        if len(batch) >= BATCH_SIZE:
+                            self._save_changes(batch)
+                            batch = []
+
             except cf.CodeforcesApiError as er:
                 self.logger.warning(f'Fetch rating changes failed for contest {contest.id}, ignoring. {er!r}')
                 pass
+        
+        # Save any final remaining partial batch
+        if auto_save and batch:
+            self._save_changes(batch)
+
         return all_changes
 
     def _save_changes(self, contest_changes_pairs):
