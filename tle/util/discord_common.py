@@ -134,7 +134,7 @@ async def presence(bot):
                 if 'Purgatory' not in {role.name for role in member.roles}
             ])
             await bot.change_presence(activity=discord.Game(
-                name=f'{target.display_name} orz'))
+                name=f'hello hello {target.display_name}'))
             await asyncio.sleep(10 * 60)
 
     presence_task.start()
