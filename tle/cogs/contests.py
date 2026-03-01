@@ -650,4 +650,301 @@ class Contests(commands.Cog):
                 continue
             old_rating = cf_common.user_db.get_vc_rating(member_id)
             new_rating = old_rating + delta
-            rating_change_by_handle[handle] = RatingChange(handle=handle, old
+            rating_change_by_handle[handle] = RatingChange(handle=handle, oldRating=old_rating, newRating=new_rating)
+            cf_common.user_db.update_vc_rating(vc_id, member_id, new_rating)
+        cf_common.user_db.finish_rated_vc(vc_id)
+        await channel.send(embed=self._make_vc_rating_changes_embed(channel.guild, vc.contest_id, rating_change_by_handle))
+        await self._show_ranklist(channel, vc.contest_id, handles, ranklist=ranklist, vc=True)
+
+    @tasks.task_spec(name='WatchRatedVCs',
+                     waiter=tasks.Waiter.fixed_delay(_WATCHING_RATED_VC_WAIT_TIME))
+    async def _watch_rated_vcs_task(self, _):
+        ongoing_rated_vcs = cf_common.user_db.get_ongoing_rated_vc_ids()
+        if ongoing_rated_vcs is None:
+            return
+        for rated_vc_id in ongoing_rated_vcs:
+            await self._watch_rated_vc(rated_vc_id)
+
+    @commands.command(brief='Unregister this user from an ongoing ratedvc', usage='@user')
+    @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
+    async def _unregistervc(self, ctx, user: discord.Member):
+        """ Unregister this user from an ongoing ratedvc.
+        """
+        ongoing_vc_member_ids = _get_ongoing_vc_participants()
+        if str(user.id) not in ongoing_vc_member_ids:
+            raise ContestCogError(f'{user.mention} has no ongoing ratedvc!')
+        cf_common.user_db.remove_last_ratedvc_participation(user.id)
+        await ctx.send(embed=discord_common.embed_success(f'Successfully unregistered {user.mention} from the ongoing vc.'))
+
+    @commands.command(brief='Set the rated vc channel to the current channel')
+    @commands.has_role(constants.TLE_ADMIN)
+    async def set_ratedvc_channel(self, ctx):
+        """ Sets the rated vc channel to the current channel.
+        """
+        cf_common.user_db.set_rated_vc_channel(ctx.guild.id, ctx.channel.id)
+        await ctx.send(embed=discord_common.embed_success('Rated VC channel saved successfully'))
+
+    @commands.command(brief='Get the rated vc channel')
+    async def get_ratedvc_channel(self, ctx):
+        """ Gets the rated vc channel.
+        """
+        channel_id = cf_common.user_db.get_rated_vc_channel(ctx.guild.id)
+        channel = ctx.guild.get_channel(channel_id)
+        if channel is None:
+            raise ContestCogError('There is no rated vc channel')
+        embed = discord_common.embed_success('Current rated vc channel')
+        embed.add_field(name='Channel', value=channel.mention)
+        await ctx.send(embed=embed)
+
+    @commands.command(brief='Show vc ratings')
+    async def vcratings(self, ctx):
+        users = [(await self.member_converter.convert(ctx, str(member_id)), handle, cf_common.user_db.get_vc_rating(member_id, default_if_not_exist=False))
+                 for member_id, handle in cf_common.user_db.get_handles_for_guild(ctx.guild.id)]
+        # Filter only rated users. (Those who entered at least one rated vc.)
+        users = [(member, handle, rating)
+                 for member, handle, rating in users
+                 if rating is not None]
+        users.sort(key=lambda user: -user[2])
+
+        _PER_PAGE = 10
+
+        def make_page(chunk, page_num):
+            style = table.Style('{:>}  {:<}  {:<}  {:<}')
+            t = table.Table(style)
+            t += table.Header('#', 'Name', 'Handle', 'Rating')
+            t += table.Line()
+            for index, (member, handle, rating) in enumerate(chunk):
+                rating_str = f'{rating} ({cf.rating2rank(rating).title_abbr})'
+                t += table.Data(_PER_PAGE * page_num + index, f'{member.display_name}', handle, rating_str)
+
+            table_str = f'```\n{t}\n```'
+            embed = discord_common.cf_color_embed(description=table_str)
+            return 'VC Ratings', embed
+
+        if not users:
+            raise ContestCogError('There are no active VCers.')
+
+        pages = [make_page(chunk, k) for k, chunk in enumerate(paginator.chunkify(users, _PER_PAGE))]
+        paginator.paginate(self.bot, ctx.channel, pages, wait_time=5 * 60, set_pagenum_footers=True)
+
+    @commands.command(brief='Plot vc rating for a list of at most 5 users', usage='@user1 @user2 ..')
+    async def vcrating(self, ctx, *members: discord.Member):
+        """Plots VC rating for at most 5 users."""
+        members = members or (ctx.author, )
+        if len(members) > 5:
+            raise ContestCogError('Cannot plot more than 5 VCers at once.')
+        plot_data = defaultdict(list)
+
+        min_rating = 1100
+        max_rating = 1800
+
+        for member in members:
+            rating_history = cf_common.user_db.get_vc_rating_history(member.id)
+            if not rating_history:
+                raise ContestCogError(f'{member.mention} has no vc history.')
+            for vc_id, rating in rating_history:
+                vc = cf_common.user_db.get_rated_vc(vc_id)
+                date = dt.datetime.fromtimestamp(vc.finish_time)
+                plot_data[member.display_name].append((date, rating))
+                min_rating = min(min_rating, rating)
+                max_rating = max(max_rating, rating)
+
+        plt.clf()
+        # plot at least from mid gray to mid purple
+        for rating_data in plot_data.values():
+            x, y = zip(*rating_data)
+            plt.plot(x, y,
+                     linestyle='-',
+                     marker='o',
+                     markersize=4,
+                     markerfacecolor='white',
+                     markeredgewidth=0.5)
+
+        gc_graph.plot_rating_bg(cf.RATED_RANKS)
+        plt.gcf().autofmt_xdate()
+
+        plt.ylim(min_rating - 100, max_rating + 200)
+        labels = [
+            gc_graph.StrWrap('{} ({})'.format(
+                member_display_name,
+                rating_data[-1][1]))
+            for member_display_name, rating_data in plot_data.items()
+        ]
+        plt.legend(labels, loc='upper left', prop=gc_graph.fontprop)
+
+        discord_file = gc_graph.get_current_figure_as_file()
+        embed = discord_common.cf_color_embed(title='VC rating graph')
+        discord_common.attach_image(embed, discord_file)
+        discord_common.set_author_footer(embed, ctx.author)
+        await ctx.send(embed=embed, file=discord_file)
+
+    @commands.command(brief='Plot vc performance for a list of at most 5 users', aliases=['vcperf'], usage='@user1 @user2 ..')
+    async def vcperformance(self, ctx, *members: discord.Member):
+        """Plots VC performance for at most 5 users."""
+        members = members or (ctx.author, )
+        if len(members) > 5:
+            raise ContestCogError('Cannot plot more than 5 VCers at once.')
+        plot_data = defaultdict(list)
+
+        min_rating = 1100
+        max_rating = 1800
+
+        for member in members:
+            rating_history = cf_common.user_db.get_vc_rating_history(member.id)
+            if not rating_history:
+                raise ContestCogError(f'{member.mention} has no vc history.')
+            ratingbefore = 1500
+            for vc_id, rating in rating_history:
+                vc = cf_common.user_db.get_rated_vc(vc_id)
+                perf = ratingbefore + (rating - ratingbefore)*4
+                date = dt.datetime.fromtimestamp(vc.finish_time)
+                plot_data[member.display_name].append((date, perf))
+                min_rating = min(min_rating, perf)
+                max_rating = max(max_rating, perf)
+                ratingbefore = rating
+
+        plt.clf()
+        # plot at least from mid gray to mid purple
+        for rating_data in plot_data.values():
+            x, y = zip(*rating_data)
+            plt.plot(x, y,
+                     linestyle='-',
+                     marker='o',
+                     markersize=4,
+                     markerfacecolor='white',
+                     markeredgewidth=0.5)
+
+        gc_graph.plot_rating_bg(cf.RATED_RANKS)
+        plt.gcf().autofmt_xdate()
+
+        plt.ylim(min_rating - 100, max_rating + 200)
+        labels = [
+            gc_graph.StrWrap('{} ({})'.format(
+                member_display_name,
+                ratingbefore))
+            for member_display_name, rating_data in plot_data.items()
+        ]
+        plt.legend(labels, loc='upper left', prop=gc_graph.fontprop)
+
+        discord_file = gc_graph.get_current_figure_as_file()
+        embed = discord_common.cf_color_embed(title='VC performance graph')
+        discord_common.attach_image(embed, discord_file)
+        discord_common.set_author_footer(embed, ctx.author)
+        await ctx.send(embed=embed, file=discord_file)
+
+    @commands.command(brief='Estimation of contest problem ratings', aliases=['probrat'], usage='contest_id')
+    async def problemratings(self, ctx, contest_id: int):
+        """Estimation of contest problem ratings"""
+        await ctx.send('This will take a while... calculating (memory-optimized)')
+        contests = await cf.contest.list()
+        reqcontest = [contest for contest in contests if contest.id == contest_id]
+        if not reqcontest:
+            raise ContestCogError('Contest not found.')
+            
+        combined = [contest for contest in contests if reqcontest[0].startTimeSeconds == contest.startTimeSeconds]
+
+        # Use a dictionary to store ONLY the integers we need, avoiding massive object lists
+        aggregated_data = defaultdict(lambda: {'ratings': [], 'solves': []})
+        officialRatings = []
+        indicies = []
+        problemNames = []
+        from_cache = False
+
+        for contest in combined:
+            _, problem, ranklist = await cf.contest.standings(contest_id=contest.id, show_unofficial=False)
+
+            if contest.id == contest_id:
+                officialRatings = [prob.rating for prob in problem]
+                indicies = [prob.index for prob in problem]
+                problemNames = [prob.name for prob in problem]
+
+            # Build rating cache for THIS specific contest
+            rating_cache = dict()
+            try:
+                rating_change = await cf.contest.ratingChanges(contest_id=contest.id)
+            except cf.RatingChangesUnavailableError:
+                rating_change = []
+                
+            if len(rating_change) == 0:
+                from_cache = True
+                cached_ratings = await cf_common.cache2.rating_changes_cache.get_all_ratings_before_timestamp(reqcontest[0].startTimeSeconds)
+                for row in ranklist:
+                    member = row.party.members[0].handle
+                    if member in cached_ratings:
+                        rating_cache[member] = cached_ratings[member].newRating
+                    else:
+                        rating_cache[member] = 0
+                
+                # CRITICAL: Free the cached ratings copy from memory
+                del cached_ratings
+            else:
+                for change in rating_change:
+                    rating_cache[change.handle] = change.oldRating
+
+            # Parse the ranklist and extract ONLY the solve data
+            for j, prob in enumerate(problem):
+                prob_name = prob.name
+                for row in ranklist:
+                    member = row.party.members[0].handle
+                    if member in rating_cache:
+                        aggregated_data[prob_name]['solves'].append(min(row.problemResults[j].points, 1))
+                        aggregated_data[prob_name]['ratings'].append(rating_cache[member])
+
+            # CRITICAL: Delete massive ranklist objects before the next loop iteration
+            del ranklist
+            del rating_cache
+            del rating_change
+            
+            # Force garbage collection to reclaim memory instantly
+            gc.collect()
+
+        def calculateDifficulty(ratings, solved):
+            ans = -1000
+
+            def calcProb(dif):
+                prob = 1
+                d = 0
+                for (r, s) in zip(ratings, solved):
+                    p = 1/(1+10**((dif-r)/400))
+                    d += p
+                    if s:
+                        d -= 1
+                    prob *= p if s else (1-p)
+                return d > 0 and prob < 0.95
+                
+            jump = 4096
+            while jump >= 1:
+                if calcProb(ans+jump):
+                    ans += jump
+                jump /= 2
+            ans = round(ans+1)
+            return ans
+
+        predicted = []
+        for name in problemNames:
+            ratings = aggregated_data[name]['ratings']
+            solves = aggregated_data[name]['solves']
+            predicted.append(calculateDifficulty(ratings, solves))
+
+        # Output results
+        style = table.Style('{:<}  {:>}  {:>}')
+        t = table.Table(style)
+        t += table.Header('#', 'Official', 'Predicted (C)' if from_cache else 'Predicted')
+        t += table.Line()
+        for i, index in enumerate(indicies):
+            t += table.Data(f'{index}', f'{officialRatings[i]}', f'{predicted[i]}')
+        table_str = f'```\n{t}\n```'
+        url = f'{cf.CONTEST_BASE_URL}{contest_id}'
+        title = reqcontest[0].name
+        embed = discord_common.cf_color_embed(description=table_str, title=title, url=url)
+        await ctx.send(embed=embed)
+
+    @discord_common.send_error_if(ContestCogError, rl.RanklistError,
+                                  cache_system2.CacheError, cf_common.ResolveHandleError)
+    async def cog_command_error(self, ctx, error):
+        pass
+
+
+
+async def setup(bot):
+    await bot.add_cog(Contests(bot))
