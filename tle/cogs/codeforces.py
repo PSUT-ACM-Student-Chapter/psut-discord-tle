@@ -230,7 +230,7 @@ class Codeforces(commands.Cog):
         def make_page(chunk):
             
             title = '{} solved problems by {}'.format('Hardest' if hardest else 'Recently',
-                                                        ', '.join(handlesWithUrl))
+                                                      ', '.join(handlesWithUrl))
             hist_str = '\n'.join(make_line(sub) for sub in chunk)
             embed = discord_common.cf_color_embed(description=hist_str)
             return title, embed
@@ -409,7 +409,7 @@ class Codeforces(commands.Cog):
             issue, finish, name, contest, index, delta, status = entry
             if finish:
                 score+=_calculateGitgudScoreForDelta(delta)
-     
+      
 
         pages = [make_page(chunk, score) for chunk in paginator.chunkify(data, 10)]
         paginator.paginate(self.bot, ctx.channel, pages, wait_time=5 * 60, set_pagenum_footers=True)
@@ -477,6 +477,11 @@ class Codeforces(commands.Cog):
             await ctx.send(f'Challenge completed in {duration}. {handle} gained {score} alltime ranklist points and {monthlyPoints} monthly ranklist points.')
         else:
             await ctx.send('You have already claimed your points')
+
+        # Automatically trigger the ;mgg command
+        mgg_command = self.bot.get_command('mgg')
+        if mgg_command:
+            await ctx.invoke(mgg_command)
 
     @commands.command(brief='Skip challenge', aliases=['toobad'])
     @cf_common.user_guard(group='gitgud')
