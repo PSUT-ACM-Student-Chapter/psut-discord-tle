@@ -17,7 +17,6 @@ from tle.util import codeforces_common as cf_common
 from tle.util import discord_common, font_downloader
 
 
-
 def setup():
     # Make required directories.
     for path in constants.ALL_DIRS:
@@ -72,8 +71,17 @@ async def main():
             raise commands.NoPrivateMessage('Private messages not permitted.')
         return True
 
+    def channel_check(ctx):
+        channel_id = os.environ.get("CHANNEL_ID")
+        if channel_id and channel_id.isdigit():
+            return ctx.channel.id == int(channel_id)
+        return True
+
     # Restrict bot usage to inside guild channels only.
     bot.add_check(no_dm_check)
+    
+    # Restrict bot usage to a specific channel if CHANNEL_ID is set.
+    bot.add_check(channel_check)
 
     # cf_common.initialize needs to run first, so it must be set as the bot's
     # on_ready event handler rather than an on_ready listener.
