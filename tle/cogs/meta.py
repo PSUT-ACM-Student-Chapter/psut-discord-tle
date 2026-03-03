@@ -87,7 +87,7 @@ class Meta(commands.Cog):
     @meta.command(brief='Prints bot uptime')
     async def uptime(self, ctx):
         """Replies with how long TLE has been up."""
-        await ctx.send('TLE has been running for ' +
+        await ctx.send('PXL has been running for ' +
                        pretty_time_format(time.time() - self.start_time))
 
     @meta.command(brief='Print bot guilds')

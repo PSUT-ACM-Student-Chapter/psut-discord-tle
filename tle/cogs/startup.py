@@ -13,6 +13,8 @@ class Startup(commands.Cog):
         
         if channel:
             await channel.send("Hello Hello people")
+            await ctx.send('PXL has been running for ' +
+                       pretty_time_format(time.time() - self.start_time))
         else:
             print("Startup Cog: Could not find the channel to send the startup message.")
 
