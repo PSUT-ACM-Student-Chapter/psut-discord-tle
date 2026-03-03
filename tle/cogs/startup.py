@@ -8,7 +8,7 @@ class Startup(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        channel_id = os.environ.get("CHANNEL_ID")
+        channel_id = int(os.environ.get("CHANNEL_ID"))
         channel = self.bot.get_channel(channel_id)
         
         if channel:
