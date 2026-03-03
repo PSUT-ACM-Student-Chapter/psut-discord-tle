@@ -68,16 +68,30 @@ class Meta(commands.Cog):
         """Restarts the bot."""
         await ctx.send('Dying...')
         os._exit(0)
-
+    
     @meta.command(brief='Is TLE up?')
     async def ping(self, ctx):
         """Replies to a ping."""
         start = time.perf_counter()
         message = await ctx.send(':ping_pong: Pong!')
         end = time.perf_counter()
-        duration = (end - start) * 1000
-        await message.edit(content=f'REST API latency: {int(duration)}ms\n'
-                                   f'Gateway API latency: {int(self.bot.latency * 1000)}ms')
+        
+        rest_latency = int((end - start) * 1000)
+        gateway_latency = int(self.bot.latency * 1000)
+        
+        # Determine a funny CP-themed message based on how slow the API is
+        if rest_latency < 150:
+            joke = "O(1) complexity! Did you precompute the answers? 🚀"
+        elif rest_latency < 400:
+            joke = "Acceptable O(N log N) time. Passes the system tests. 🏃"
+        elif rest_latency < 1000:
+            joke = "O(N²) detected. Careful, you might get a TLE soon... 🐢"
+        else:
+            joke = "Time Limit Exceeded on Pretest 1. Who wrote this O(N!) brute force? 💀"
+
+        await message.edit(content=f'REST API latency: {rest_latency}ms\n'
+                                   f'Gateway API latency: {gateway_latency}ms\n\n'
+                                   f'*{joke}*')
 
     @meta.command(brief='Get git information')
     async def git(self, ctx):
