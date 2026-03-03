@@ -1,17 +1,39 @@
 import unicodedata
 
+# Safely import the libraries needed for Arabic text. 
+# If they aren't installed, the bot will still run normally without crashing.
+try:
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+    HAS_BIDI = True
+except ImportError:
+    print("Warning: arabic_reshaper or python-bidi not installed. Arabic text won't be formatted.")
+    HAS_BIDI = False
+
 FULL_WIDTH = 1.66667
 WIDTH_MAPPING = {'F': FULL_WIDTH, 'H': 1, 'W': FULL_WIDTH, 'Na': 1, 'N': 1, 'A': 1}
 
 def width(s):
-    return round(sum(WIDTH_MAPPING[unicodedata.east_asian_width(c)] for c in s))
+    return round(sum(WIDTH_MAPPING[unicodedata.east_asian_width(c)] for c in str(s)))
 
+def process_arabic(text):
+    """Reshapes Arabic letters to connect properly and fixes RTL order."""
+    if HAS_BIDI and isinstance(text, str):
+        # Reshape connects the Arabic letters properly
+        reshaped_text = arabic_reshaper.reshape(text)
+        # get_display fixes the Right-to-Left rendering order for Discord code blocks
+        bidi_text = get_display(reshaped_text)
+        return bidi_text
+    return text
 
 class Content:
     def __init__(self, *args):
-        self.data = args
+        # Apply Arabic formatting to all text entering the table
+        self.data = [process_arabic(arg) for arg in args]
+        
     def sizes(self):
         return [width(str(x)) for x in self.data]
+        
     def __len__(self):
         return len(self.data)
 

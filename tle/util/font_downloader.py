@@ -32,3 +32,24 @@ def maybe_download():
     for font_path in FONTS:
         if not os.path.isfile(font_path):
             _download(font_path)
+
+    # Make sure the font directory exists
+    os.makedirs(constants.FONT_DIR, exist_ok=True)
+
+    # 1. Download CJK Font (Existing behavior)
+    cjk_font_path = os.path.join(constants.FONT_DIR, 'NotoSansCJKjp-Regular.otf')
+    if not os.path.isfile(cjk_font_path):
+        print('Downloading CJK font...')
+        urllib.request.urlretrieve(CJK_FONT_URL, 'cjk_font.zip')
+        with zipfile.ZipFile('cjk_font.zip', 'r') as zip_ref:
+            zip_ref.extractall(constants.FONT_DIR)
+        os.remove('cjk_font.zip')
+
+    # 2. Download Arabic Font (New behavior)
+    arabic_font_path = os.path.join(constants.FONT_DIR, 'NotoSansArabic-Regular.ttf')
+    if not os.path.isfile(arabic_font_path):
+        print('Downloading Arabic font...')
+        urllib.request.urlretrieve(ARABIC_FONT_URL, 'arabic_font.zip')
+        with zipfile.ZipFile('arabic_font.zip', 'r') as zip_ref:
+            zip_ref.extractall(constants.FONT_DIR)
+        os.remove('arabic_font.zip')
