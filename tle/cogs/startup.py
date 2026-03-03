@@ -12,9 +12,7 @@ class Startup(commands.Cog):
         channel = self.bot.get_channel(channel_id)
         
         if channel:
-            await channel.send("Hello Hello people")
-            await ctx.send('PXL has been running for ' +
-                       pretty_time_format(time.time() - self.start_time))
+            await channel.send("Hello Hello people, I was restarting and taking a nap I am back now")
         else:
             print("Startup Cog: Could not find the channel to send the startup message.")
 
