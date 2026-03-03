@@ -51,6 +51,5 @@ class Motivation(commands.Cog):
             await message.channel.send(reply_msg)
 
 # Setup function to load the cog into the bot
-def setup(bot):
-    bot.add_cog(Motivation(bot))
-
+async def setup(bot):
+    await bot.add_cog(Motivation(bot))
