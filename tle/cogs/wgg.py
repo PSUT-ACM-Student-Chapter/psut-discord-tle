@@ -138,8 +138,8 @@ class WeeklyGitgudders(commands.Cog):
             
             if not user_scores:
                 embed = discord.Embed(
-                    title=f"Weekly Gitgudders - {week_name}",
-                    description="No one earned any points this week! Time to get coding! 💻",
+                    title=f"🗓️ Weekly Gitgudders Wrap-Up - {week_name} 🗓️",
+                    description="No one earned any points this week! The leaderboard is wide open! 💻",
                     color=discord.Color.light_grey()
                 )
                 await channel.send(embed=embed)
@@ -148,19 +148,19 @@ class WeeklyGitgudders(commands.Cog):
                 
             top_3 = user_scores[:3]
             medals = ["🥇", "🥈", "🥉"]
-            desc = f"🏆 **The results for {week_name} are in!** 🏆\n\nHere are your Top 3 Gitgudders:\n\n"
+            desc = f"🔥 **The grind never stops! Here are the top performers for {week_name}:** 🔥\n\n"
             
             for i, (score, user_id, handle) in enumerate(top_3):
                 member = channel.guild.get_member(user_id)
                 mention = member.mention if member else f"`{handle}`"
                 desc += f"{medals[i]} {mention} — **{score}** points\n"
                 
-            desc += "\n*Keep up the great work!*"
+            desc += "\n*Points will reset on Monday. Keep up the great work!*"
             
             embed = discord.Embed(
-                title="🌟 Weekly Gitgudders Winners 🌟", 
+                title="🗓️ Weekly Gitgudders Wrap-Up 🗓️", 
                 description=desc, 
-                color=discord.Color.gold()
+                color=discord.Color.blue()  # Using Blue for weekly to differentiate from the Gold monthly
             )
             
             await channel.send(embed=embed)
