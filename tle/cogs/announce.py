@@ -1,7 +1,7 @@
 import datetime
 import os
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 
 from tle import constants
 from tle.util import codeforces_common as cf_common
@@ -31,116 +31,90 @@ def _check_more_points_active(now_time, start_time, end_time):
 class Announcer(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.last_announced_month = None
-        self.monthly_announcement_task.start()
-
-    def cog_unload(self):
-        self.monthly_announcement_task.cancel()
-
-    # Runs exactly at 00:00 (Midnight) UTC every day
-    @tasks.loop(time=datetime.time(hour=0, minute=0, tzinfo=datetime.timezone.utc))
-    async def monthly_announcement_task(self):
-        """Runs in the background at midnight UTC to check if the month rolled over."""
-        now = datetime.datetime.now(datetime.timezone.utc)
-        
-        # Check if today is the 1st day of the month
-        if now.day == 1:
-            current_month_key = f"{now.year}-{now.month}"
-            
-            # Make sure we only announce it once per month
-            if self.last_announced_month != current_month_key:
-                self.last_announced_month = current_month_key
-                
-                # Calculate timestamps for the PREVIOUS month
-                # (By subtracting 1 second from midnight of the 1st, we land on the last day of the previous month)
-                last_day_prev_month = now.replace(day=1, hour=0, minute=0, second=0) - datetime.timedelta(seconds=1)
-                start_time, end_time = cf_common.get_start_and_end_of_month(last_day_prev_month)
-                month_name = last_day_prev_month.strftime("%B %Y")
-                
-                await self.announce_winners(start_time, end_time, month_name)
-
-    @monthly_announcement_task.before_loop
-    async def before_monthly_announcement_task(self):
-        """Wait for the bot to be fully ready before starting the background loop."""
-        await self.bot.wait_until_ready()
 
     async def announce_winners(self, start_time, end_time, month_name):
         """Calculates the scores for the given timeframe and posts the Top 3."""
-        channel_id_str = os.environ.get("CHANNEL_ID")
-        if not channel_id_str or not channel_id_str.isdigit():
+        # Support either CHANNEL_IDS or CHANNEL_ID for backward compatibility
+        channel_ids_str = os.environ.get("CHANNEL_IDS", os.environ.get("CHANNEL_ID"))
+        if not channel_ids_str:
             return
             
-        channel = self.bot.get_channel(int(channel_id_str))
-        if not channel:
-            return
-            
-        guild = channel.guild
-        res = cf_common.user_db.get_cf_users_for_guild(guild.id)
-        if not res:
-            return
-            
-        user_scores = []
+        # Split the string by commas and strip any spaces
+        channel_ids = [cid.strip() for cid in channel_ids_str.split(",") if cid.strip().isdigit()]
         
-        # Iterate over all registered Codeforces users in this server
-        for user_id, cf_user in res:
-            data = cf_common.user_db.gitlog(user_id)
-            if not data:
+        for cid in channel_ids:
+            channel = self.bot.get_channel(int(cid))
+            if not channel:
                 continue
                 
-            score = 0
-            for entry in data:
-                issue, finish, name, contest, index, delta, status = entry
+            guild = channel.guild
+            res = cf_common.user_db.get_cf_users_for_guild(guild.id)
+            if not res:
+                continue
                 
-                # Check if the problem was finished within the target month
-                if finish and start_time <= finish < end_time:
-                    pts = _calculateGitgudScoreForDelta(delta)
-                    if _check_more_points_active(finish, start_time, end_time):
-                        pts *= 2
-                    score += pts
+            user_scores = []
+            
+            # Iterate over all registered Codeforces users in this server
+            for user_id, cf_user in res:
+                data = cf_common.user_db.gitlog(user_id)
+                if not data:
+                    continue
                     
-            if score > 0:
-                user_scores.append((score, user_id, cf_user.handle))
+                score = 0
+                for entry in data:
+                    issue, finish, name, contest, index, delta, status = entry
+                    
+                    # Check if the problem was finished within the target month
+                    if finish and start_time <= finish < end_time:
+                        pts = _calculateGitgudScoreForDelta(delta)
+                        if _check_more_points_active(finish, start_time, end_time):
+                            pts *= 2
+                        score += pts
+                        
+                if score > 0:
+                    user_scores.append((score, user_id, cf_user.handle))
+                    
+            if not user_scores:
+                # Nobody scored points last month
+                embed = discord.Embed(
+                    title=f"Monthly Gitgudders - {month_name}",
+                    description="No one earned any points! Time to get coding! 💻",
+                    color=discord.Color.light_grey()
+                )
+                await channel.send(embed=embed)
+                continue
                 
-        if not user_scores:
-            # Nobody scored points last month
+            # Sort by score descending
+            user_scores.sort(key=lambda x: x[0], reverse=True)
+            top_3 = user_scores[:3]
+            
+            medals = ["🥇", "🥈", "🥉"]
+            desc = f"🏆 **The results for {month_name} are in!** 🏆\n\nHere are your Top 3 Gitgudders:\n\n"
+            
+            for i, (score, user_id, handle) in enumerate(top_3):
+                member = guild.get_member(user_id)
+                mention = member.mention if member else f"`{handle}`"
+                desc += f"{medals[i]} {mention} — **{score}** points\n"
+                
+            desc += "\n*Keep up the great work!*"
+            
             embed = discord.Embed(
-                title=f"Monthly Gitgudders - {month_name}",
-                description="No one earned any points last month! Time to get coding! 💻",
-                color=discord.Color.light_grey()
+                title="🌟 Monthly Gitgudders Winners 🌟", 
+                description=desc, 
+                color=discord.Color.gold()
             )
+            
             await channel.send(embed=embed)
-            return
-            
-        # Sort by score descending
-        user_scores.sort(key=lambda x: x[0], reverse=True)
-        top_3 = user_scores[:3]
-        
-        medals = ["🥇", "🥈", "🥉"]
-        desc = f"🏆 **The results for {month_name} are in!** 🏆\n\nHere are your Top 3 Gitgudders:\n\n"
-        
-        for i, (score, user_id, handle) in enumerate(top_3):
-            member = guild.get_member(user_id)
-            mention = member.mention if member else f"`{handle}`"
-            desc += f"{medals[i]} {mention} — **{score}** points\n"
-            
-        desc += "\n*Points have been reset for the new month. Good luck!*"
-        
-        embed = discord.Embed(
-            title="🌟 Monthly Gitgudders Winners 🌟", 
-            description=desc, 
-            color=discord.Color.gold()
-        )
-        
-        await channel.send(embed=embed)
 
     @commands.command(hidden=True)
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def force_announce_mgg(self, ctx):
-        """Admin command to force-announce the PREVIOUS month's winners for testing."""
+        """Admin command to manually trigger the announcement for the CURRENT month."""
         now = datetime.datetime.now(datetime.timezone.utc)
-        last_day_prev_month = now.replace(day=1, hour=0, minute=0, second=0) - datetime.timedelta(seconds=1)
-        start_time, end_time = cf_common.get_start_and_end_of_month(last_day_prev_month)
-        month_name = last_day_prev_month.strftime("%B %Y")
+        
+        # Get start and end of the CURRENT month for manual announcements
+        start_time, end_time = cf_common.get_start_and_end_of_month(now)
+        month_name = now.strftime("%B %Y")
         
         await self.announce_winners(start_time, end_time, month_name)
         await ctx.message.add_reaction("✅")
