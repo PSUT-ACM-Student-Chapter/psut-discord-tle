@@ -72,15 +72,18 @@ async def main():
         return True
 
     def channel_check(ctx):
-        channel_id = os.environ.get("CHANNEL_ID")
-        if channel_id and channel_id.isdigit():
-            return ctx.channel.id == int(channel_id)
+        # Allow checking either CHANNEL_IDS or CHANNEL_ID for backward compatibility
+        channel_ids_str = os.environ.get("CHANNEL_IDS", os.environ.get("CHANNEL_ID"))
+        if channel_ids_str:
+            # Parse multiple channels separated by commas and remove empty spaces
+            channel_ids = [int(cid.strip()) for cid in channel_ids_str.split(",") if cid.strip().isdigit()]
+            return ctx.channel.id in channel_ids
         return True
 
     # Restrict bot usage to inside guild channels only.
     bot.add_check(no_dm_check)
     
-    # Restrict bot usage to a specific channel if CHANNEL_ID is set.
+    # Restrict bot usage to specific channels if CHANNEL_IDS is set.
     bot.add_check(channel_check)
 
     # cf_common.initialize needs to run first, so it must be set as the bot's
