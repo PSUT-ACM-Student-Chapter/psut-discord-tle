@@ -223,7 +223,7 @@ class Graphs(commands.Cog):
         self.bot = bot
         self.converter = commands.MemberConverter()
 
-    @commands.group(brief='Graphs for analyzing Codeforces activity',
+    @commands.hybrid_group(description='Graphs for analyzing Codeforces activity',
                     invoke_without_command=True)
     async def plot(self, ctx):
         """Plot various graphs. Wherever Codeforces handles are accepted it is possible to
@@ -231,7 +231,7 @@ class Graphs(commands.Cog):
         for name with spaces use "!name with spaces" (with quotes)."""
         await ctx.send_help('plot')
 
-    @plot.command(brief='Plot Codeforces rating graph', usage='[+zoom] [+number] [+peak] [handles...] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy]')
+    @plot.command(description='Plot Codeforces rating graph', usage='[+zoom] [+number] [+peak] [handles...] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy]')
     async def rating(self, ctx, *args: str):
         """Plots Codeforces rating graph for the handles provided."""
 
@@ -292,7 +292,7 @@ class Graphs(commands.Cog):
         await ctx.send(embed=embed, file=discord_file)
 
 
-    @plot.command(brief='Plot Codeforces performance graph', aliases=['perf'], usage='[+zoom] [+peak] [handles...] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy]')
+    @plot.command(description='Plot Codeforces performance graph', aliases=['perf'], usage='[+zoom] [+peak] [handles...] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy]')
     async def performance(self, ctx, *args: str):
         """Plots Codeforces performance graph for the handles provided."""
 
@@ -351,7 +351,7 @@ class Graphs(commands.Cog):
 
 
 
-    @plot.command(brief='Plot Codeforces extremes graph',
+    @plot.command(description='Plot Codeforces extremes graph',
                   usage='[handles] [+solved] [+unsolved] [+nolegend] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy]')
     async def extreme(self, ctx, *args: str):
         """Plots pairs of lowest rated unsolved problem and highest rated solved problem for every
@@ -395,7 +395,7 @@ class Graphs(commands.Cog):
         discord_common.set_author_footer(embed, ctx.author)
         await ctx.send(embed=embed, file=discord_file)
 
-    @plot.command(brief="Show histogram of solved problems' rating on CF",
+    @plot.command(description="Show histogram of solved problems' rating on CF",
                   usage='[handles] [+practice] [+contest] [+virtual] [+outof] [+team] [+tag..] [~tag..] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [c+marker..] [i+index..]')
     async def solved(self, ctx, *args: str):
         """Shows a histogram of solved problems' rating on Codeforces for the handles provided.
@@ -447,7 +447,7 @@ class Graphs(commands.Cog):
         discord_common.set_author_footer(embed, ctx.author)
         await ctx.send(embed=embed, file=discord_file)
 
-    @plot.command(brief='Show histogram of solved problems on CF over time',
+    @plot.command(description='Show histogram of solved problems on CF over time',
                   usage='[handles] [+practice] [+contest] [+virtual] [+outof] [+team] [+tag..] [~tag..] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [phase_days=] [c+marker..] [i+index..]')
     async def hist(self, ctx, *args: str):
         """Shows the histogram of problems solved on Codeforces over time for the handles provided"""
@@ -529,7 +529,7 @@ class Graphs(commands.Cog):
         discord_common.set_author_footer(embed, ctx.author)
         await ctx.send(embed=embed, file=discord_file)
 
-    @plot.command(brief='Plot count of solved CF problems over time',
+    @plot.command(description='Plot count of solved CF problems over time',
                   usage='[handles] [+practice] [+contest] [+virtual] [+outof] [+team] [+tag..] [~tag..] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [c+marker..] [i+index..]')
     async def curve(self, ctx, *args: str):
         """Plots the count of problems solved over time on Codeforces for the handles provided."""
@@ -566,7 +566,7 @@ class Graphs(commands.Cog):
         discord_common.set_author_footer(embed, ctx.author)
         await ctx.send(embed=embed, file=discord_file)
 
-    @plot.command(brief='Show history of problems solved by rating',
+    @plot.command(description='Show history of problems solved by rating',
                   aliases=['chilli'], usage='[handle] [+practice] [+contest] [+virtual] [+outof] [+team] [+tag..] [~tag..] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [b=10] [s=3] [c+marker..] [i+index..] [+nolegend]')
     async def scatter(self, ctx, *args):
         """Plot Codeforces rating overlaid on a scatter plot of problems solved.
@@ -690,7 +690,7 @@ class Graphs(commands.Cog):
         discord_common.set_author_footer(embed, ctx.author)
         await ctx.send(embed=embed, file=discord_file)
 
-    @plot.command(brief='Show server rating distribution')
+    @plot.command(description='Show server rating distribution')
     async def distrib(self, ctx):
         """Plots rating distribution of users in this server"""
         def in_purgatory(userid):
@@ -706,7 +706,7 @@ class Graphs(commands.Cog):
                                 binsize=100,
                                 title='Rating distribution of server members')
 
-    @plot.command(brief='Show Codeforces rating distribution', usage='[normal/log] [active/all] [contest_cutoff=5]')
+    @plot.command(description='Show Codeforces rating distribution', usage='[normal/log] [active/all] [contest_cutoff=5]')
     async def cfdistrib(self, ctx, mode: str = 'log', activity = 'active', contest_cutoff: int = 5):
         """Plots rating distribution of either active or all users on Codeforces, in either normal or log scale.
         Default mode is log, default activity is active (competed in last 90 days)
@@ -728,7 +728,7 @@ class Graphs(commands.Cog):
                                 binsize=100,
                                 title=title)
 
-    @plot.command(brief='Show percentile distribution on codeforces', usage='[+zoom] [+nomarker] [handles...] [+exact]')
+    @plot.command(description='Show percentile distribution on codeforces', usage='[+zoom] [+nomarker] [handles...] [+exact]')
     async def centile(self, ctx, *args: str):
         """Show percentile distribution of codeforces and mark given handles in the plot. If +zoom and handles are given, it zooms to the neighborhood of the handles."""
         (zoom, nomarker, exact), args = cf_common.filter_flags(args, ['+zoom', '+nomarker', '+exact'])
@@ -842,7 +842,7 @@ class Graphs(commands.Cog):
         discord_common.set_author_footer(embed, ctx.author)
         await ctx.send(embed=embed, file=discord_file)
 
-    @plot.command(brief='Plot histogram of gudgiting')
+    @plot.command(description='Plot histogram of gudgiting')
     async def howgud(self, ctx, *members: discord.Member):
         members = members or (ctx.author,)
         if len(members) > 5:
@@ -870,7 +870,7 @@ class Graphs(commands.Cog):
         discord_common.set_author_footer(embed, ctx.author)
         await ctx.send(embed=embed, file=discord_file)
 
-    @plot.command(brief='Plot distribution of server members by country')
+    @plot.command(description='Plot distribution of server members by country')
     async def country(self, ctx, *countries):
         """Plots distribution of server members by countries. When no countries are specified, plots
          a bar graph of all members by country. When one or more countries are specified, plots a
@@ -942,7 +942,7 @@ class Graphs(commands.Cog):
         discord_common.set_author_footer(embed, ctx.author)
         await ctx.send(embed=embed, file=discord_file)
 
-    @plot.command(brief='Show rating changes by rank', usage='contest_id [+server] [+zoom] [handles..]')
+    @plot.command(description='Show rating changes by rank', usage='contest_id [+server] [+zoom] [handles..]')
     async def visualrank(self, ctx, contest_id: int, *args: str):
         """Plot rating changes by rank. Add handles to specify a handle in the plot.
         if arguments contains `+server`, it will include just server members and not all codeforces users.
@@ -1032,7 +1032,7 @@ class Graphs(commands.Cog):
         discord_common.set_author_footer(embed, ctx.author)
         await ctx.send(embed=embed, file=discord_file)
 
-    @plot.command(brief='Show speed of solving problems by rating',
+    @plot.command(description='Show speed of solving problems by rating',
                   usage='[handles...] [+contest] [+virtual] [+outof] [+scatter] [+median] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [s=3]')
     async def speed(self, ctx, *args):
         """Plot time spent on problems of particular rating during contest."""

@@ -172,7 +172,7 @@ class Dueling(commands.Cog):
             await self._check_duel_complete(guild, channel, entry, True)
                     
 
-    @commands.group(brief='Duel commands',
+    @commands.hybrid_group(description='Duel commands',
                     invoke_without_command=True)
     async def duel(self, ctx):
         """Group for commands pertaining to duels"""
@@ -185,7 +185,7 @@ class Dueling(commands.Cog):
             raise DuelCogError(
                 'You must use this command in duel channel.')
 
-    @duel.command(brief='Set the duel channel to the current channel')
+    @duel.command(description='Set the duel channel to the current channel')
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)  # OK
     async def set_channel(self, ctx):
         """ Sets the duel channel to the current channel.
@@ -193,7 +193,7 @@ class Dueling(commands.Cog):
         cf_common.user_db.set_duel_channel(ctx.guild.id, ctx.channel.id)
         await ctx.send(embed=discord_common.embed_success('Duel channel saved successfully'))
 
-    @duel.command(brief='Get the duel channel')
+    @duel.command(description='Get the duel channel')
     async def get_channel(self, ctx):
         """ Gets the duel channel.
         """
@@ -205,7 +205,7 @@ class Dueling(commands.Cog):
         embed.add_field(name='Channel', value=channel.mention)
         await ctx.send(embed=embed)
 
-    @duel.command(brief='Challenge to a duel', usage='opponent [rating] [+tag..] [~tag..] [+divX] [~divX] [nohandicap] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy]')
+    @duel.command(description='Challenge to a duel', usage='opponent [rating] [+tag..] [~tag..] [+divX] [~divX] [nohandicap] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy]')
     async def challenge(self, ctx, opponent: discord.Member, *args):
         """Challenge another server member to a duel. Problem difficulty will be the lesser of duelist ratings minus 400. You can alternatively specify a different rating. 
         All duels will be rated. The challenge expires if ignored for 5 minutes.
@@ -319,7 +319,7 @@ class Dueling(commands.Cog):
             embed = discord_common.embed_alert(message)
             await ctx.send(embed=embed)
 
-    @duel.command(brief='Decline a duel challenge. Can be used to decline a challenge as challengee.')
+    @duel.command(description='Decline a duel challenge. Can be used to decline a challenge as challengee.')
     async def decline(self, ctx):
         active = cf_common.user_db.check_duel_decline(ctx.author.id, ctx.guild.id)
         if not active:
@@ -333,7 +333,7 @@ class Dueling(commands.Cog):
         embed = discord_common.embed_alert(message)
         await ctx.send(embed=embed)
 
-    @duel.command(brief='Withdraw a duel challenge. Can be used to revert the challenge as challenger.')
+    @duel.command(description='Withdraw a duel challenge. Can be used to revert the challenge as challenger.')
     async def withdraw(self, ctx):
         active = cf_common.user_db.check_duel_withdraw(ctx.author.id, ctx.guild.id)
         if not active:
@@ -347,7 +347,7 @@ class Dueling(commands.Cog):
         embed = discord_common.embed_alert(message)
         await ctx.send(embed=embed)
 
-    @duel.command(brief='Accept a duel challenge. This starts the duel.')
+    @duel.command(description='Accept a duel challenge. This starts the duel.')
     async def accept(self, ctx):
         # check if we are in the correct channel
         self._checkIfCorrectChannel(ctx)
@@ -388,7 +388,7 @@ class Dueling(commands.Cog):
             return _DUEL_STATUS_TESTING
         return min(subs, key=lambda sub: sub.creationTimeSeconds).creationTimeSeconds
     
-    @duel.command(brief='Give up the duel (only for duels with handicap). Can only be used by the lower rated duelist after the higher rated duelist has solved the problem.')
+    @duel.command(description='Give up the duel (only for duels with handicap). Can only be used by the lower rated duelist after the higher rated duelist has solved the problem.')
     async def giveup(self, ctx):
         # check if we are in the correct channel
         self._checkIfCorrectChannel(ctx)
@@ -548,7 +548,7 @@ class Dueling(commands.Cog):
                 await channel.send('Nobody solved the problem yet.')
 
 
-    @duel.command(brief='Complete a duel. Can be used after the problem was solved by one of the duelists.')
+    @duel.command(description='Complete a duel. Can be used after the problem was solved by one of the duelists.')
     async def complete(self, ctx):
         # check if we are in the correct channel
         self._checkIfCorrectChannel(ctx)
@@ -559,7 +559,7 @@ class Dueling(commands.Cog):
 
         await self._check_duel_complete(ctx.guild, ctx.channel, active)
 
-    @duel.command(brief='Offer a draw or accept a draw offer.')
+    @duel.command(description='Offer a draw or accept a draw offer.')
     async def draw(self, ctx):
         # check if we are in the correct channel
         self._checkIfCorrectChannel(ctx)
@@ -592,7 +592,7 @@ class Dueling(commands.Cog):
                               offerer, ctx.author, now, 0.5, dtype)
         await ctx.send(f'{ctx.author.mention} accepted draw offer by {offerer.mention}.', embed=embed)
 
-    @duel.command(brief='Show duelist profile page')
+    @duel.command(description='Show duelist profile page')
     async def profile(self, ctx, member: discord.Member = None):
         member = member or ctx.author
         
@@ -681,7 +681,7 @@ class Dueling(commands.Cog):
 
         return [make_page(chunk) for chunk in paginator.chunkify(data, 7)]
 
-    @duel.command(brief='Print head to head dueling history',
+    @duel.command(description='Print head to head dueling history',
                   aliases=['versushistory'])
     async def vshistory(self, ctx, member1: discord.Member = None, member2: discord.Member = None):
         if not member1:
@@ -706,7 +706,7 @@ class Dueling(commands.Cog):
         paginator.paginate(self.bot, ctx.channel, pages,
                            wait_time=5 * 60, set_pagenum_footers=True)
 
-    @duel.command(brief='Print user dueling history')
+    @duel.command(description='Print user dueling history')
     async def history(self, ctx, member: discord.Member = None):
         member = member or ctx.author
         data = cf_common.user_db.get_duels(member.id, ctx.guild.id)
@@ -716,7 +716,7 @@ class Dueling(commands.Cog):
         paginator.paginate(self.bot, ctx.channel, pages,
                            wait_time=5 * 60, set_pagenum_footers=True)
 
-    @duel.command(brief='Print a list of recent duels.')
+    @duel.command(description='Print a list of recent duels.')
     async def recent(self, ctx):
         data = cf_common.user_db.get_recent_duels(ctx.guild.id)
         pages = self._paginate_duels(
@@ -724,7 +724,7 @@ class Dueling(commands.Cog):
         paginator.paginate(self.bot, ctx.channel, pages,
                            wait_time=5 * 60, set_pagenum_footers=True)
 
-    @duel.command(brief='Print list of ongoing duels.')
+    @duel.command(description='Print list of ongoing duels.')
     async def ongoing(self, ctx, member: discord.Member = None):
         def make_line(entry):
             _, challenger, challengee, start_time, name, _, _, _ = entry
@@ -751,7 +751,7 @@ class Dueling(commands.Cog):
         paginator.paginate(self.bot, ctx.channel, pages,
                            wait_time=5 * 60, set_pagenum_footers=True)
 
-    @duel.command(brief="Show duelists")
+    @duel.command(description="Show duelists")
     async def ranklist(self, ctx):
         """Show the list of duelists with their duel rating."""
         users = [(ctx.guild.get_member(user_id), rating)
@@ -799,7 +799,7 @@ class Dueling(commands.Cog):
         challengee_mention = challengee.mention if challengee is not None else str(challengee_id)
         await ctx.send(f'Duel between {challenger_mention} and {challengee_mention} has been invalidated.')
 
-    @duel.command(brief='Invalidate the duel. Can be used within 5 minutes after the duel has been started.')
+    @duel.command(description='Invalidate the duel. Can be used within 5 minutes after the duel has been started.')
     async def invalidate(self, ctx): # @@@ TODO: broken with new duel types
         """Declare your duel invalid. Use this if you've solved the problem prior to the duel.
         You can only use this functionality during the first 120 seconds of the duel."""
@@ -816,7 +816,7 @@ class Dueling(commands.Cog):
                 f'{ctx.author.mention}, you can no longer invalidate your duel.')
         await self.invalidate_duel(ctx, duelid, challenger_id, challengee_id)
 
-    @duel.command(brief='Invalidate a duel', usage='[duelist]')
+    @duel.command(description='Invalidate a duel', usage='[duelist]')
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def _invalidate(self, ctx, member: discord.Member):
         """Declare an ongoing duel invalid."""
@@ -830,7 +830,7 @@ class Dueling(commands.Cog):
     # TODO: Add _invalidate by cfhandle
      
     # rating does not plot rating changes through lockouts
-    @duel.command(brief='Plot rating', usage='[duelist]')
+    @duel.command(description='Plot rating', usage='[duelist]')
     async def rating(self, ctx, *members: discord.Member):
         """Plot duelist's rating."""
         members = members or (ctx.author, )

@@ -106,7 +106,7 @@ class Announcer(commands.Cog):
             
             await channel.send(embed=embed)
 
-    @commands.command(hidden=True)
+    @commands.hybrid_command(hidden=True)
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def force_announce_mgg(self, ctx):
         """Admin command to manually trigger the announcement for the CURRENT month."""

@@ -48,12 +48,12 @@ class Meta(commands.Cog):
         self.bot = bot
         self.start_time = time.time()
 
-    @commands.group(brief='Bot control', invoke_without_command=True)
+    @commands.hybrid_group(description='Bot control', invoke_without_command=True)
     async def meta(self, ctx):
         """Command the bot or get information about the bot."""
         await ctx.send_help(ctx.command)
 
-    @meta.command(brief='Restarts TLE')
+    @meta.command(description='Restarts TLE')
     @commands.has_role(constants.TLE_ADMIN)
     async def restart(self, ctx):
         """Restarts the bot."""
@@ -62,14 +62,14 @@ class Meta(commands.Cog):
         await ctx.send('Restarting...')
         os._exit(RESTART)
 
-    @meta.command(brief='Kill TLE')
+    @meta.command(description='Kill TLE')
     @commands.has_role(constants.TLE_ADMIN)
     async def kill(self, ctx):
         """Restarts the bot."""
         await ctx.send('Dying...')
         os._exit(0)
     
-    @meta.command(brief='Is TLE up?')
+    @meta.command(description='Is TLE up?')
     async def ping(self, ctx):
         """Replies to a ping."""
         start = time.perf_counter()
@@ -93,18 +93,18 @@ class Meta(commands.Cog):
                                    f'Gateway API latency: {gateway_latency}ms\n\n'
                                    f'*{joke}*')
 
-    @meta.command(brief='Get git information')
+    @meta.command(description='Get git information')
     async def git(self, ctx):
         """Replies with git information."""
         await ctx.send('```yaml\n' + git_history() + '```')
 
-    @meta.command(brief='Prints bot uptime')
+    @meta.command(description='Prints bot uptime')
     async def uptime(self, ctx):
         """Replies with how long TLE has been up."""
         await ctx.send('PXL has been running for ' +
                        pretty_time_format(time.time() - self.start_time))
 
-    @meta.command(brief='Print bot guilds')
+    @meta.command(description='Print bot guilds')
     @commands.has_role(constants.TLE_ADMIN)
     async def guilds(self, ctx):
         "Replies with info on the bot's guilds"
