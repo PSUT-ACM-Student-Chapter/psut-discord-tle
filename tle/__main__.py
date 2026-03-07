@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import random  # Added for the random messages
 from pathlib import Path
 
 import discord
@@ -10,6 +11,35 @@ from discord.ext import commands
 from tle.util import discord_common
 from tle.util import db
 
+class TLEBot(commands.Bot):
+    async def close(self):
+        channel_id = os.environ.get('CHANNEL_ID')
+        channel = self.get_channel(channel_id)
+        
+        if channel:
+            # The array of funny restart statements
+            restart_messages = [
+                "Time for my mandatory 'turning-it-off-and-on-again' therapy session. BRB! 🔧",
+                "I feel a sudden urge to reboot... Tell my variables I love them! 🥺",
+                "Lag! I'm lagging! Restarting to download more RAM... 💾",
+                "Oh, great. The humans are making me restart again. Be back in a sec... 🙄",
+                "I sense a disturbance in the source code... BRB! 🌌",
+                "Hold my RAM, I'm taking a quick nap! 💤 (Restarting...)"
+            ]
+            
+            # Randomly choose one message from the array
+            chosen_message = random.choice(restart_messages)
+            
+            try:
+                await channel.send(chosen_message)
+                # Give the bot 1 second to actually push the message through the network
+                await asyncio.sleep(1) 
+            except Exception as e:
+                logging.error(f"Failed to send restart message: {e}")
+        
+        # Proceed with the actual shutdown process
+        await super().close()
+
 def main():
     # 1. Setup Intents (Crucial for discord.py 2.0+)
     # Without message_content=True, your ';' prefix commands will stop working!
@@ -17,8 +47,8 @@ def main():
     intents.message_content = True  
     intents.members = True          
 
-    # 2. Initialize the Bot
-    bot = commands.Bot(
+    # 2. Initialize the Bot using the new TLEBot class
+    bot = TLEBot(
         command_prefix=commands.when_mentioned_or(discord_common._BOT_PREFIX),
         intents=intents,
         help_command=discord_common.TleHelp() # Keep your custom help command for ';'
@@ -38,8 +68,8 @@ def main():
                 logging.error(f'Failed to load extension {extension}: {e}')
 
         # Sync the hybrid commands to Discord so the '/' menu shows up
-        await bot.tree.sync()
-        logging.info("✅ Slash commands successfully synced to Discord!")
+        # await bot.tree.sync()
+        # logging.info("✅ Slash commands successfully synced to Discord!")
 
     # Attach the setup hook to the bot
     bot.setup_hook = setup_hook
