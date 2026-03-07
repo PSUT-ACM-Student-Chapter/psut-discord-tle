@@ -125,5 +125,5 @@ class FairLeaderboard(commands.Cog):
             await ctx.send(embed=embed)
 
 # This setup function is required for discord.ext.commands to load the Cog
-def setup(bot):
-    bot.add_cog(FairLeaderboard(bot))
+async def setup(bot):
+    await bot.add_cog(FairLeaderboard(bot))
