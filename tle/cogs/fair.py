@@ -113,7 +113,7 @@ def get_fair_leaderboard_image(rankings):
     y = BORDER_MARGIN
 
     # draw header
-    draw_row('#', 'Name', 'Handle', 'Points', SMOKE_WHITE, y, bold=True)
+    draw_row('#', 'Name', 'Handle', 'Solved / Points', SMOKE_WHITE, y, bold=True)
     y += LINE_HEIGHT*HEADER_SPACING
 
     for i, (pos, name, handle, rating, score) in enumerate(rankings):
@@ -293,8 +293,8 @@ class FairLeaderboard(commands.Cog):
         for i, entry in enumerate(leaderboard[:20]):
             member = ctx.guild.get_member(entry['user_id'])
             discord_handle = member.display_name if member else ""
-            # Format the score string to include the number of problems solved
-            score_str = f"{entry['points']:.2f} pts ({entry['solved_count']} solved)"
+            # Format the score string as "Solved / Points"
+            score_str = f"{entry['solved_count']} / {entry['points']:.2f}"
             rankings.append((i, discord_handle, entry['handle'], entry['rating'], score_str))
             
         image_bytes = get_fair_leaderboard_image(rankings)
