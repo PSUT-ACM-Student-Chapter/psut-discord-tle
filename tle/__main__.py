@@ -26,30 +26,35 @@ from tle.util import db
 # ---------------------------------------------------------
 class TLEBot(commands.Bot):
     async def close(self):
-        # IMPORTANT: Replace this with your actual Discord channel ID!
-        channel_id = 123456789012345678  
-        channel = self.get_channel(channel_id)
+        # Fetch the channel ID from the environment variable
+        channel_id_str = os.environ.get('CHANNEL_ID')
         
-        if channel:
-            # The array of funny restart statements
-            restart_messages = [
-                "Time for my mandatory 'turning-it-off-and-on-again' therapy session. BRB! 🔧",
-                "I feel a sudden urge to reboot... Tell my variables I love them! 🥺",
-                "Lag! I'm lagging! Restarting to download more RAM... 💾",
-                "Oh, great. The humans are making me restart again. Be back in a sec... 🙄",
-                "I sense a disturbance in the source code... BRB! 🌌",
-                "Hold my RAM, I'm taking a quick nap! 💤 (Restarting...)"
-            ]
+        if channel_id_str and channel_id_str.isdigit():
+            channel_id = int(channel_id_str)
+            channel = self.get_channel(channel_id)
             
-            # Randomly choose one message from the array
-            chosen_message = random.choice(restart_messages)
-            
-            try:
-                await channel.send(chosen_message)
-                # Give the bot 1 second to actually push the message through the network
-                await asyncio.sleep(1) 
-            except Exception as e:
-                logging.error(f"Failed to send restart message: {e}")
+            if channel:
+                # The array of funny restart statements
+                restart_messages = [
+                    "Time for my mandatory 'turning-it-off-and-on-again' therapy session. BRB! 🔧",
+                    "I feel a sudden urge to reboot... Tell my variables I love them! 🥺",
+                    "Lag! I'm lagging! Restarting to download more RAM... 💾",
+                    "Oh, great. The humans are making me restart again. Be back in a sec... 🙄",
+                    "I sense a disturbance in the source code... BRB! 🌌",
+                    "Hold my RAM, I'm taking a quick nap! 💤 (Restarting...)"
+                ]
+                
+                # Randomly choose one message from the array
+                chosen_message = random.choice(restart_messages)
+                
+                try:
+                    await channel.send(chosen_message)
+                    # Give the bot 1 second to actually push the message through the network
+                    await asyncio.sleep(1) 
+                except Exception as e:
+                    logging.error(f"Failed to send restart message: {e}")
+        else:
+            logging.warning("CHANNEL_ID is not set or invalid. Skipping restart message.")
         
         # Proceed with the actual shutdown process
         await super().close()
@@ -94,16 +99,35 @@ def main():
         db_file = os.environ.get('TLE_DB_FILE', os.environ.get('DB_FILE', 'tle.db'))
         logging.info(f"Connecting to database: {db_file}")
         
-        # 1. Create the database connection objects
-        user_db_conn = db.UserDbConn(db_file)
-        cache2_conn = db.Cache2DbConn(db_file)
-        
-        # 2. Pass them directly to cf_common.initialize()
-        # This properly binds user_db and cache2 internally without throwing errors
-        logging.info("Initializing Codeforces common utilities...")
-        cf_common.initialize(user_db_conn, cache2_conn)
-        
-        logging.info("✅ Database and Codeforces utilities successfully initialized.")
+        # 1. Bind user_db to cf_common (Crucial fix for 'NoneType' errors)
+        if hasattr(db, 'UserDbConn'):
+            cf_common.user_db = db.UserDbConn(db_file)
+            logging.info("✅ User Database bound successfully.")
+        else:
+            logging.error("db.UserDbConn not found in your fork!")
+            
+        # 2. Bind the Cache database safely depending on your fork's version
+        if hasattr(db, 'Cache2DbConn'):
+            cf_common.cache2 = db.Cache2DbConn(db_file)
+            logging.info("✅ Cache2 Database bound.")
+        elif hasattr(db, 'CacheDbConn'):
+            cf_common.cache2 = db.CacheDbConn(db_file)
+            logging.info("✅ Cache Database bound.")
+            
+        # 3. Safely initialize cf_common utilities
+        if hasattr(cf_common, 'initialize'):
+            import inspect
+            sig = inspect.signature(cf_common.initialize)
+            try:
+                # Some forks require args, some require none. This handles both!
+                if len(sig.parameters) > 0:
+                    cf_common.initialize(cf_common.user_db, getattr(cf_common, 'cache2', None))
+                else:
+                    cf_common.initialize()
+                logging.info("✅ Codeforces utilities successfully initialized.")
+            except Exception as e:
+                logging.warning(f"cf_common.initialize warning (safe to ignore if cogs work): {e}")
+
     except Exception as e:
         logging.error(f"Failed to initialize database/utilities: {e}")
     
