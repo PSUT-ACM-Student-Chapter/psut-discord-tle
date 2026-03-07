@@ -92,7 +92,7 @@ class Codeforces(commands.Cog):
         embed.add_field(name='Monthly points', value=monthlyPointsStr)
         await ctx.send(f'Challenge problem for `{handle}`', embed=embed)
 
-    @commands.command(brief='Upsolve a problem')
+    @commands.hybrid_command(description='Upsolve a problem')
     @cf_common.user_guard(group='gitgud')
     async def upsolve(self, ctx, choice: int = -1):
         """Upsolve: The command ;upsolve lists all problems that you haven't solved in contests you participated 
@@ -146,7 +146,7 @@ class Codeforces(commands.Cog):
             pages = [make_page(chunk, pi, len(problems)) for pi, chunk in enumerate(paginator.chunkify(problems, 10))]
             paginator.paginate(self.bot, ctx.channel, pages, wait_time=5 * 60, set_pagenum_footers=True)   
 
-    @commands.command(brief='Recommend a problem',
+    @commands.hybrid_command(description='Recommend a problem',
                       usage='[+tag..] [~tag..] [+divX] [~divX] [rating|rating1-rating2] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy]')
     @cf_common.user_guard(group='gitgud')
     async def gimme(self, ctx, *args):
@@ -196,7 +196,7 @@ class Codeforces(commands.Cog):
             embed.add_field(name='Matched tags', value=tagslist)
         await ctx.send(f'Recommended problem for `{handle}`', embed=embed)
 
-    @commands.command(brief='List solved problems',
+    @commands.hybrid_command(description='List solved problems',
                       usage='[handles] [+hardest] [+practice] [+contest] [+virtual] [+outof] [+team] [+tag..] [~tag..] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [c+marker..] [i+index..]')
     async def stalk(self, ctx, *args):
         """Print problems solved by user sorted by time (default) or rating.
@@ -238,7 +238,7 @@ class Codeforces(commands.Cog):
         pages = [make_page(chunk) for chunk in paginator.chunkify(submissions[:100], 10)]
         paginator.paginate(self.bot, ctx.channel, pages, wait_time=5 * 60, set_pagenum_footers=True)
 
-    @commands.command(brief='Create a mashup', usage='[handles] [+tag..] [~tag..] [+divX] [~divX] [?[-]delta]')
+    @commands.hybrid_command(description='Create a mashup', usage='[handles] [+tag..] [~tag..] [+divX] [~divX] [?[-]delta]')
     async def mashup(self, ctx, *args):
         """Create a mashup contest using problems within -200 and +400 of average rating of handles provided.
         Add tags with "+" before them.
@@ -295,7 +295,7 @@ class Codeforces(commands.Cog):
         embed = discord_common.cf_color_embed(description=msg)
         await ctx.send(f'Mashup contest for `{str_handles}`', embed=embed)
 
-    @commands.command(brief='Challenge', aliases=['gitbad'],
+    @commands.hybrid_command(description='Challenge', aliases=['gitbad'],
                       usage='[rating|rating1-rating2] [+tags] [~tags] [+divX] [~divX]')
     @cf_common.user_guard(group='gitgud')
     async def gitgud(self, ctx, *args):
@@ -379,7 +379,7 @@ class Codeforces(commands.Cog):
             delta = delta - 200
         await self._gitgud(ctx, handle, problems[choice], delta, hidden)
 
-    @commands.command(brief='Print user gitgud history')
+    @commands.hybrid_command(description='Print user gitgud history')
     async def gitlog(self, ctx, member: discord.Member = None):
         """Displays the list of gitgud problems issued to the specified member, excluding those noguded by admins.
         If the challenge was completed, time of completion and amount of points gained will also be displayed.
@@ -414,7 +414,7 @@ class Codeforces(commands.Cog):
         pages = [make_page(chunk, score) for chunk in paginator.chunkify(data, 10)]
         paginator.paginate(self.bot, ctx.channel, pages, wait_time=5 * 60, set_pagenum_footers=True)
 
-    @commands.command(brief='Print user nogud history')
+    @commands.hybrid_command(description='Print user nogud history')
     async def nogudlog(self, ctx, member: discord.Member = None):
         """Displays the list of nogud problems issued to the specified member, excluding those noguded by admins.
         """
@@ -444,7 +444,7 @@ class Codeforces(commands.Cog):
         pages = [make_page(chunk) for chunk in paginator.chunkify(data, 10)]
         paginator.paginate(self.bot, ctx.channel, pages, wait_time=5 * 60, set_pagenum_footers=True)
 
-    @commands.command(brief='Report challenge completion', aliases=['gotbad'])
+    @commands.hybrid_command(description='Report challenge completion', aliases=['gotbad'])
     @cf_common.user_guard(group='gitgud')
     async def gotgud(self, ctx):
         handle, = await cf_common.resolve_handles(ctx, self.converter, ('!' + str(ctx.author),))
@@ -483,7 +483,7 @@ class Codeforces(commands.Cog):
         if mgg_command:
             await ctx.invoke(mgg_command)
 
-    @commands.command(brief='Skip challenge', aliases=['toobad'])
+    @commands.hybrid_command(description='Skip challenge', aliases=['toobad'])
     @cf_common.user_guard(group='gitgud')
     async def nogud(self, ctx):
         await cf_common.resolve_handles(ctx, self.converter, ('!' + str(ctx.author),))
@@ -501,7 +501,7 @@ class Codeforces(commands.Cog):
         cf_common.user_db.skip_challenge(user_id, challenge_id, Gitgud.NOGUD)
         await ctx.send(f'Challenge skipped.')
 
-    @commands.command(brief='Force skip a challenge')
+    @commands.hybrid_command(description='Force skip a challenge')
     @cf_common.user_guard(group='gitgud')
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def _nogud(self, ctx, member: discord.Member):
@@ -515,7 +515,7 @@ class Codeforces(commands.Cog):
         else:
             await ctx.send(f'Failed to force challenge skip.')
 
-    @commands.command(brief='Recommend a contest', usage='[handles...] [+pattern...]')
+    @commands.hybrid_command(description='Recommend a contest', usage='[handles...] [+pattern...]')
     async def vc(self, ctx, *args: str):
         """Recommends a contest based on Codeforces rating of the handle provided.
         e.g ;vc mblazev c1729 +global +hello +goodbye +avito"""
@@ -560,7 +560,7 @@ class Codeforces(commands.Cog):
         pages = [make_page(chunk) for chunk in paginator.chunkify(contests, 5)]
         paginator.paginate(self.bot, ctx.channel, pages, wait_time=5 * 60, set_pagenum_footers=True)
 
-    @commands.command(brief="Display unsolved rounds closest to completion", usage='[keywords]')
+    @commands.hybrid_command(description="Display unsolved rounds closest to completion", usage='[keywords]')
     async def fullsolve(self, ctx, *args: str):
         """Displays a list of contests, sorted by number of unsolved problems.
         Contest names matching any of the provided tags will be considered. e.g ;fullsolve +edu"""
@@ -631,7 +631,7 @@ class Codeforces(commands.Cog):
                 right = r
         return round((left + right) / 2)
 
-    @commands.command(brief='Calculate team rating', usage='[handles] [+peak]')
+    @commands.hybrid_command(description='Calculate team rating', usage='[handles] [+peak]')
     async def teamrate(self, ctx, *args: str):
         """Provides the combined rating of the entire team.
         If +server is provided as the only handle, will display the rating of the entire server.

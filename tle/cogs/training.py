@@ -266,7 +266,7 @@ class Training(commands.Cog):
         self.bot = bot
         self.converter = commands.MemberConverter()
 
-    @commands.group(brief='Training commands',
+    @commands.hybrid_group(description='Training commands',
                     invoke_without_command=True)
     async def training(self, ctx):
         """ A training is a game played against the bot. In this game the bot will assign you a codeforces problem that you should solve. If you manage to solve the problem the bot will assign you a harder problem. If you need to skip the problem the bot will lower the difficulty.
@@ -536,7 +536,7 @@ class Training(commands.Cog):
 
     # User commands start here
 
-    @training.command(brief='Start a training session',
+    @training.command(description='Start a training session',
                       usage='[rating] [infinite|survival|timed15|timed30|timed60]')
     @cf_common.user_guard(group='training')
     async def start(self, ctx, *args):
@@ -570,7 +570,7 @@ class Training(commands.Cog):
         # assign new problem
         await self._startTrainingAndAssignProblem(ctx, handle, problem, gamestate)
 
-    @training.command(brief='If you have solved your current problem it will assign a new one')
+    @training.command(description='If you have solved your current problem it will assign a new one')
     @cf_common.user_guard(group='training')
     async def solved(self, ctx, *args):
         """ Use this command if you got AC on the training problem. If game continues the bot will assign a new problem.
@@ -610,7 +610,7 @@ class Training(commands.Cog):
         # Assign new problem
         await self._assignNewTrainingProblem(ctx, active, handle, problem, gamestate)
 
-    @training.command(brief='If you want to skip your current problem you can get a new one.')
+    @training.command(description='If you want to skip your current problem you can get a new one.')
     @cf_common.user_guard(group='training')
     async def skip(self, ctx):
         """ Use this command if you want to skip your current training problem. If not in infinite mode this will reduce your lives by 1.
@@ -647,7 +647,7 @@ class Training(commands.Cog):
         # Assign new problem
         await self._assignNewTrainingProblem(ctx, active, handle, problem, gamestate)
 
-    @training.command(brief='End your training session.')
+    @training.command(description='End your training session.')
     @cf_common.user_guard(group='training')
     async def end(self, ctx):
         """ Use this command to end the current training session. 
@@ -674,7 +674,7 @@ class Training(commands.Cog):
         if await self._endTrainingIfDead(ctx, active, handle, gamestate):
             return
 
-    @training.command(brief='Shows current status of your training session.', usage='[username]')
+    @training.command(description='Shows current status of your training session.', usage='[username]')
     async def status(self, ctx, member: discord.Member = None):
         """ Use this command to show the current status of your training session and the current assigned problem. 
             If you don't have an active training this will show the stats of your latest training session.
@@ -698,7 +698,7 @@ class Training(commands.Cog):
             gamestate = Game(latest[6], latest[7], latest[8], latest[9])
             await self._postTrainingStatistics(ctx, latest, handle, gamestate, False, True)
 
-    @training.command(brief="Show fastest training solves")
+    @training.command(description="Show fastest training solves")
     async def fastest(self, ctx, *args):
         """Show a list of fastest solves within a training session for each rating."""
         res = cf_common.user_db.train_get_fastest_solves()
@@ -724,7 +724,7 @@ class Training(commands.Cog):
         discord_file = get_fastest_solves_image(rankings)
         await ctx.send(file=discord_file)
 
-    @training.command(brief='Set the training channel to the current channel')
+    @training.command(description='Set the training channel to the current channel')
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)  # OK
     async def set_channel(self, ctx):
         """ Sets the training channel to the current channel.
@@ -732,7 +732,7 @@ class Training(commands.Cog):
         cf_common.user_db.set_training_channel(ctx.guild.id, ctx.channel.id)
         await ctx.send(embed=discord_common.embed_success('Training channel saved successfully'))
 
-    @training.command(brief='Get the training channel')
+    @training.command(description='Get the training channel')
     async def get_channel(self, ctx):
         """ Gets the training channel.
         """

@@ -199,19 +199,19 @@ class Contests(commands.Cog):
         paginator.paginate(self.bot, ctx.channel, pages, wait_time=_CONTEST_PAGINATE_WAIT_TIME,
                            set_pagenum_footers=True)
 
-    @commands.group(brief='Commands for listing contests',
+    @commands.hybrid_group(description='Commands for listing contests',
                     invoke_without_command=True)
     async def clist(self, ctx):
         await ctx.send_help(ctx.command)
 
-    @clist.command(brief='List future contests')
+    @clist.command(description='List future contests')
     async def future(self, ctx):
         """List future contests on Codeforces."""
         await self._send_contest_list(ctx, self.future_contests,
                                       title='Future contests on Codeforces',
                                       empty_msg='No future contests scheduled')
 
-    @clist.command(brief='List active contests')
+    @clist.command(description='List active contests')
     async def active(self, ctx):
         """List active contests on Codeforces, namely those in coding phase, pending system
         test or in system test."""
@@ -219,19 +219,19 @@ class Contests(commands.Cog):
                                       title='Active contests on Codeforces',
                                       empty_msg='No contests currently active')
 
-    @clist.command(brief='List recent finished contests')
+    @clist.command(description='List recent finished contests')
     async def finished(self, ctx):
         """List recently concluded contests on Codeforces."""
         await self._send_contest_list(ctx, self.finished_contests,
                                       title='Recently finished contests on Codeforces',
                                       empty_msg='No finished contests found')
 
-    @commands.group(brief='Commands for contest reminders',
+    @commands.hybrid_group(description='Commands for contest reminders',
                     invoke_without_command=True)
     async def remind(self, ctx):
         await ctx.send_help(ctx.command)
 
-    @remind.command(brief='Set reminder settings')
+    @remind.command(description='Set reminder settings')
     @commands.has_role(constants.TLE_ADMIN)
     async def here(self, ctx, role: discord.Role, *before: int):
         """Sets reminder channel to current channel, role to the given role, and reminder
@@ -245,14 +245,14 @@ class Contests(commands.Cog):
         await ctx.send(embed=discord_common.embed_success('Reminder settings saved successfully'))
         self._reschedule_tasks(ctx.guild.id)
 
-    @remind.command(brief='Clear all reminder settings')
+    @remind.command(description='Clear all reminder settings')
     @commands.has_role(constants.TLE_ADMIN)
     async def clear(self, ctx):
         cf_common.user_db.clear_reminder_settings(ctx.guild.id)
         await ctx.send(embed=discord_common.embed_success('Reminder settings cleared'))
         self._reschedule_tasks(ctx.guild.id)
 
-    @remind.command(brief='Show reminder settings')
+    @remind.command(description='Show reminder settings')
     async def settings(self, ctx):
         """Shows the role, channel and before time settings."""
         settings = cf_common.user_db.get_reminder_settings(ctx.guild.id)
@@ -284,7 +284,7 @@ class Contests(commands.Cog):
             raise ContestCogError('The role set for reminders is no longer available.')
         return role
 
-    @remind.command(brief='Subscribe to contest reminders')
+    @remind.command(description='Subscribe to contest reminders')
     async def on(self, ctx):
         """Subscribes you to contest reminders. Use ';remind settings' to see the current
         settings.
@@ -297,7 +297,7 @@ class Contests(commands.Cog):
             embed = discord_common.embed_success('Successfully subscribed to contest reminders')
         await ctx.send(embed=embed)
 
-    @remind.command(brief='Unsubscribe from contest reminders')
+    @remind.command(description='Unsubscribe from contest reminders')
     async def off(self, ctx):
         """Unsubscribes you from contest reminders."""
         role = self._get_remind_role(ctx.guild)
@@ -466,7 +466,7 @@ class Contests(commands.Cog):
 
         return rated_contestants, ranklist
 
-    @commands.command(brief='Show ranklist for given handles and/or server members')
+    @commands.hybrid_command(description='Show ranklist for given handles and/or server members')
     async def ranklist(self, ctx, contest_id: int, *args: str):
         """
         Shows ranklist for the contest with given contest id. If handles contains
@@ -525,7 +525,7 @@ class Contests(commands.Cog):
         pages = self._make_standings_pages(contest, problem_indices, handle_standings, deltas)
         paginator.paginate(self.bot, channel, pages, wait_time=_STANDINGS_PAGINATE_WAIT_TIME, delete_after=delete_after)
 
-    @commands.command(brief='Start a rated vc.', usage='<contest_id> <@user1 @user2 ...>')
+    @commands.hybrid_command(description='Start a rated vc.', usage='<contest_id> <@user1 @user2 ...>')
     async def ratedvc(self, ctx, contest_id: int, *members: discord.Member):
         ratedvc_channel_id = cf_common.user_db.get_rated_vc_channel(ctx.guild.id)
         if not ratedvc_channel_id or ctx.channel.id != ratedvc_channel_id:
@@ -665,7 +665,7 @@ class Contests(commands.Cog):
         for rated_vc_id in ongoing_rated_vcs:
             await self._watch_rated_vc(rated_vc_id)
 
-    @commands.command(brief='Unregister this user from an ongoing ratedvc', usage='@user')
+    @commands.hybrid_command(description='Unregister this user from an ongoing ratedvc', usage='@user')
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def _unregistervc(self, ctx, user: discord.Member):
         """ Unregister this user from an ongoing ratedvc.
@@ -676,7 +676,7 @@ class Contests(commands.Cog):
         cf_common.user_db.remove_last_ratedvc_participation(user.id)
         await ctx.send(embed=discord_common.embed_success(f'Successfully unregistered {user.mention} from the ongoing vc.'))
 
-    @commands.command(brief='Set the rated vc channel to the current channel')
+    @commands.hybrid_command(description='Set the rated vc channel to the current channel')
     @commands.has_role(constants.TLE_ADMIN)
     async def set_ratedvc_channel(self, ctx):
         """ Sets the rated vc channel to the current channel.
@@ -684,7 +684,7 @@ class Contests(commands.Cog):
         cf_common.user_db.set_rated_vc_channel(ctx.guild.id, ctx.channel.id)
         await ctx.send(embed=discord_common.embed_success('Rated VC channel saved successfully'))
 
-    @commands.command(brief='Get the rated vc channel')
+    @commands.hybrid_command(description='Get the rated vc channel')
     async def get_ratedvc_channel(self, ctx):
         """ Gets the rated vc channel.
         """
@@ -696,7 +696,7 @@ class Contests(commands.Cog):
         embed.add_field(name='Channel', value=channel.mention)
         await ctx.send(embed=embed)
 
-    @commands.command(brief='Show vc ratings')
+    @commands.hybrid_command(description='Show vc ratings')
     async def vcratings(self, ctx):
         users = [(await self.member_converter.convert(ctx, str(member_id)), handle, cf_common.user_db.get_vc_rating(member_id, default_if_not_exist=False))
                  for member_id, handle in cf_common.user_db.get_handles_for_guild(ctx.guild.id)]
@@ -727,7 +727,7 @@ class Contests(commands.Cog):
         pages = [make_page(chunk, k) for k, chunk in enumerate(paginator.chunkify(users, _PER_PAGE))]
         paginator.paginate(self.bot, ctx.channel, pages, wait_time=5 * 60, set_pagenum_footers=True)
 
-    @commands.command(brief='Plot vc rating for a list of at most 5 users', usage='@user1 @user2 ..')
+    @commands.hybrid_command(description='Plot vc rating for a list of at most 5 users', usage='@user1 @user2 ..')
     async def vcrating(self, ctx, *members: discord.Member):
         """Plots VC rating for at most 5 users."""
         members = members or (ctx.author, )
@@ -778,7 +778,7 @@ class Contests(commands.Cog):
         discord_common.set_author_footer(embed, ctx.author)
         await ctx.send(embed=embed, file=discord_file)
 
-    @commands.command(brief='Plot vc performance for a list of at most 5 users', aliases=['vcperf'], usage='@user1 @user2 ..')
+    @commands.hybrid_command(description='Plot vc performance for a list of at most 5 users', aliases=['vcperf'], usage='@user1 @user2 ..')
     async def vcperformance(self, ctx, *members: discord.Member):
         """Plots VC performance for at most 5 users."""
         members = members or (ctx.author, )
@@ -832,7 +832,7 @@ class Contests(commands.Cog):
         discord_common.set_author_footer(embed, ctx.author)
         await ctx.send(embed=embed, file=discord_file)
 
-    @commands.command(brief='Estimation of contest problem ratings', aliases=['probrat'], usage='contest_id')
+    @commands.hybrid_command(description='Estimation of contest problem ratings', aliases=['probrat'], usage='contest_id')
     async def problemratings(self, ctx, contest_id: int):
         """Estimation of contest problem ratings"""
         await ctx.send('This will take a while... calculating (memory-optimized)')

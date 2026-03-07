@@ -102,13 +102,13 @@ class Starboard(commands.Cog):
             cf_common.user_db.add_starboard_message(message.id, starboard_message.id, guild.id)
             self.logger.info(f'Added message {message.id} to starboard (Last reaction by {payload.user_id})')
 
-    @commands.group(brief='Starboard commands',
+    @commands.hybrid_group(description='Starboard commands',
                     invoke_without_command=True)
     async def starboard(self, ctx):
         """Group for commands involving the starboard."""
         await ctx.send_help(ctx.command)
 
-    @starboard.command(brief='Set starboard to current channel')
+    @starboard.command(description='Set starboard to current channel')
     @commands.has_role(constants.TLE_ADMIN)
     async def here(self, ctx):
         """Set the current channel as starboard."""
@@ -119,7 +119,7 @@ class Starboard(commands.Cog):
         cf_common.user_db.set_starboard(ctx.guild.id, ctx.channel.id)
         await ctx.send(embed=discord_common.embed_success('Starboard channel set'))
 
-    @starboard.command(brief='Clear starboard settings')
+    @starboard.command(description='Clear starboard settings')
     @commands.has_role(constants.TLE_ADMIN)
     async def clear(self, ctx):
         """Stop tracking starboard messages and remove the currently set starboard channel
@@ -128,7 +128,7 @@ class Starboard(commands.Cog):
         cf_common.user_db.clear_starboard_messages_for_guild(ctx.guild.id)
         await ctx.send(embed=discord_common.embed_success('Starboard channel cleared'))
 
-    @starboard.command(brief='Remove a message from starboard')
+    @starboard.command(description='Remove a message from starboard')
     @commands.has_role(constants.TLE_ADMIN)
     async def remove(self, ctx, original_message_id: int):
         """Remove a particular message from the starboard database."""

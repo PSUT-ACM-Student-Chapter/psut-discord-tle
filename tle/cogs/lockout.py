@@ -233,11 +233,11 @@ class Round(commands.Cog):
                         inline=True)
         return embed
 
-    @commands.group(brief='Commands related to lockout rounds! Type ;round for more details', invoke_without_command=True)
+    @commands.hybrid_group(description='Commands related to lockout rounds! Type ;round for more details', invoke_without_command=True)
     async def round(self, ctx):
         await ctx.send(embed=self.make_round_embed(ctx))
 
-    @round.command(brief='Set the lockout channel to the current channel (Admin/Mod only)')
+    @round.command(description='Set the lockout channel to the current channel (Admin/Mod only)')
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)  # OK
     async def set_channel(self, ctx):
         """ Sets the lockout round channel to the current channel.
@@ -245,7 +245,7 @@ class Round(commands.Cog):
         cf_common.user_db.set_round_channel(ctx.guild.id, ctx.channel.id)
         await ctx.send(embed=discord_common.embed_success('Lockout round channel saved successfully'))
 
-    @round.command(brief='Get the lockout channel')
+    @round.command(description='Get the lockout channel')
     async def get_channel(self, ctx):
         """ Gets the lockout round channel.
         """
@@ -275,7 +275,7 @@ class Round(commands.Cog):
         return problem
 
 
-    @round.command(name="challenge", brief="Challenge multiple users to a round", usage="[@user1 @user2...]")
+    @round.command(name="challenge", description="Challenge multiple users to a round", usage="[@user1 @user2...]")
     async def challenge(self, ctx, *members: discord.Member):
         # check if we are in the correct channel
         self._check_if_correct_channel(ctx)
@@ -322,7 +322,7 @@ class Round(commands.Cog):
 
         await ctx.send(embed=self._round_problems_embed(round_info))
 
-    @round.command(brief="Invalidate a round (Admin/Mod only)", usage="@user")
+    @round.command(description="Invalidate a round (Admin/Mod only)", usage="@user")
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)  # OK
     async def _invalidate(self, ctx, member: discord.Member):
         if not cf_common.user_db.check_if_user_in_ongoing_round(ctx.guild.id, member.id):
@@ -330,7 +330,7 @@ class Round(commands.Cog):
         cf_common.user_db.delete_round(ctx.guild.id, member.id)
         await ctx.send(f'Round deleted.')
 
-    @round.command(brief="View problems of your round or for a specific user", usage="[@user]")
+    @round.command(description="View problems of your round or for a specific user", usage="[@user]")
     async def problems(self, ctx, member: discord.Member=None):
         # check if we are in the correct channel
         self._check_if_correct_channel(ctx)
@@ -489,7 +489,7 @@ class Round(commands.Cog):
 
 
 
-    @round.command(brief="Update matches status for the server")
+    @round.command(description="Update matches status for the server")
     @cooldown(1, AUTO_UPDATE_TIME, BucketType.guild)
     async def update(self, ctx):
         # check if we are in the correct channel
@@ -501,7 +501,7 @@ class Round(commands.Cog):
 
         
 
-    @round.command(name="ongoing", brief="View ongoing rounds")
+    @round.command(name="ongoing", description="View ongoing rounds")
     async def ongoing(self, ctx):
         data = cf_common.user_db.get_ongoing_rounds(ctx.guild.id)
 
@@ -533,7 +533,7 @@ class Round(commands.Cog):
         paginator.paginate(self.bot, ctx.channel, pages, wait_time=_PAGINATE_WAIT_TIME,
                            set_pagenum_footers=True)
 
-    @round.command(name="recent", brief="Show recent rounds")
+    @round.command(name="recent", description="Show recent rounds")
     async def recent(self, ctx, user: discord.Member=None):
         data = cf_common.user_db.get_recent_rounds(ctx.guild.id, str(user.id) if user else None)
         
@@ -565,7 +565,7 @@ class Round(commands.Cog):
         paginator.paginate(self.bot, ctx.channel, pages, wait_time=_PAGINATE_WAIT_TIME,
                            set_pagenum_footers=True)
 
-#     @round.command(name="custom", brief="Challenge to a round with custom problemset")
+#     @round.command(name="custom", description="Challenge to a round with custom problemset")
 #     async def custom(self, ctx, *users: discord.Member):
 #         users = list(set(users))
 #         if len(users) == 0:

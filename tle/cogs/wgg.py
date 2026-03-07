@@ -187,7 +187,7 @@ class WeeklyGitgudders(commands.Cog):
         user_scores.sort(key=lambda x: x[0], reverse=True)
         return user_scores
 
-    @commands.command(brief="View the Weekly Gitgudders leaderboard", aliases=["weeklygitgudders", "weeklygg"], usage="[div1|div2|div3] [+all]")
+    @commands.hybrid_command(description="View the Weekly Gitgudders leaderboard", aliases=["weeklygitgudders", "weeklygg"], usage="[div1|div2|div3] [+all]")
     async def wgg(self, ctx, *args):
         """Displays the Gitgudders leaderboard for the current week (Monday to Sunday)."""
         division = None
@@ -244,7 +244,7 @@ class WeeklyGitgudders(commands.Cog):
         discord_file = get_gudgitters_image(rankings)
         await ctx.send(file=discord_file)
 
-    @commands.command(hidden=True)
+    @commands.hybrid_command(hidden=True)
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def force_announce_wgg(self, ctx):
         """Admin command to manually trigger the Top 3 announcement for the CURRENT week."""

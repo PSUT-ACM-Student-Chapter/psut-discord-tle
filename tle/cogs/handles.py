@@ -284,7 +284,7 @@ class Handles(commands.Cog):
     async def on_member_remove(self, member):
         cf_common.user_db.set_inactive([(member.guild.id, member.id)])
 
-    @commands.command(brief='update status, mark guild members as active')
+    @commands.hybrid_command(description='update status, mark guild members as active')
     @commands.has_role(constants.TLE_ADMIN)
     async def _updatestatus(self, ctx):
         gid = ctx.guild.id
@@ -334,7 +334,7 @@ class Handles(commands.Cog):
                              return_exceptions=True)
         self.logger.info(f'All guilds updated for contest {contest.id}.')
 
-    @commands.group(brief='Commands that have to do with handles', invoke_without_command=True)
+    @commands.hybrid_group(description='Commands that have to do with handles', invoke_without_command=True)
     async def handle(self, ctx):
         """Change or collect information about specific handles on Codeforces"""
         await ctx.send_help(ctx.command)
@@ -359,7 +359,7 @@ class Handles(commands.Cog):
         if role_to_assign is not None and role_to_assign not in member.roles:
             await member.add_roles(role_to_assign, reason=reason)
 
-    @handle.command(brief='Set Codeforces handle of a user', aliases=["link"])
+    @handle.command(description='Set Codeforces handle of a user', aliases=["link"])
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def set(self, ctx, member: discord.Member, handle: str):
         """Set Codeforces handle of a user."""
@@ -387,7 +387,7 @@ class Handles(commands.Cog):
         await self.update_member_rank_role(member, role_to_assign,
                                            reason='New handle set for user')
 
-    @handle.command(brief='Identify yourself', usage='[handle]')
+    @handle.command(description='Identify yourself', usage='[handle]')
     @cf_common.user_guard(group='handle',
                           get_exception=lambda: HandleCogError('Identification is already running for you'))
     async def identify(self, ctx, handle: str):
@@ -421,7 +421,7 @@ class Handles(commands.Cog):
                 return
         await ctx.send(f'Sorry `{invoker}`, can you try again? Remember: The identification process needs you to submit a Compilation error to the mentioned problem!')
 
-    @handle.command(brief='Get handle by Discord username')
+    @handle.command(description='Get handle by Discord username')
     async def get(self, ctx, member: discord.Member):
         """Show Codeforces handle of a user."""
         handle = cf_common.user_db.get_handle(member.id, ctx.guild.id)
@@ -431,7 +431,7 @@ class Handles(commands.Cog):
         embed = _make_profile_embed(member, user, mode='get')
         await ctx.send(embed=embed)
 
-    @handle.command(brief='Get Discord username by cf handle')
+    @handle.command(description='Get Discord username by cf handle')
     async def rget(self, ctx, handle: str):
         """Show Discord username of a cf handle."""
         user_id = cf_common.user_db.get_user_id(handle, ctx.guild.id)
@@ -445,7 +445,7 @@ class Handles(commands.Cog):
         await ctx.send(embed=embed)
 
 
-    @handle.command(brief='Unlink handle', aliases=["unlink"])
+    @handle.command(description='Unlink handle', aliases=["unlink"])
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def remove(self, ctx, handle: str):
         """Remove Codeforces handle of a user."""
@@ -462,7 +462,7 @@ class Handles(commands.Cog):
         await ctx.send(embed=embed)
     
 
-    @handle.command(brief='Resolve redirect of a user\'s handle')
+    @handle.command(description='Resolve redirect of a user\'s handle')
     async def unmagic(self, ctx):
         """Updates handle of the calling user if they have changed handles
         (typically new year's magic)"""
@@ -470,7 +470,7 @@ class Handles(commands.Cog):
         handle = cf_common.user_db.get_handle(member.id, ctx.guild.id)
         await self._unmagic_handles(ctx, [handle], {handle: member})
 
-    @handle.command(brief='Resolve handles needing redirection')
+    @handle.command(description='Resolve handles needing redirection')
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def unmagic_all(self, ctx):
         """Updates handles of all users that have changed handles
@@ -514,7 +514,7 @@ class Handles(commands.Cog):
             lines += failed
         return discord_common.embed_success('\n'.join(lines))
 
-    @commands.command(brief="Show gudgitters", aliases=["gitgudders", "gitbadders", "gg"], usage="[div1|div2|div3] [+all]")
+    @commands.hybrid_command(description="Show gudgitters", aliases=["gitgudders", "gitbadders", "gg"], usage="[div1|div2|div3] [+all]")
     async def gudgitters(self, ctx, *args):
         """Show the list of users of gitgud with their scores."""
         res = cf_common.user_db.get_gudgitters()
@@ -571,7 +571,7 @@ class Handles(commands.Cog):
                     if self.dlo <= change.ratingUpdateTimeSeconds < self.dhi]
         return rating_changes
 
-    @commands.command(brief="Show gudgitters of the month", aliases=["monthlygitgudders","monthlygg","monthlygitbadders", "mgg"], usage="[div1|div2|div3] [d=mmyyyy] [+all]")
+    @commands.hybrid_command(description="Show gudgitters of the month", aliases=["monthlygitgudders","monthlygg","monthlygitbadders", "mgg"], usage="[div1|div2|div3] [d=mmyyyy] [+all]")
     async def monthlygudgitters(self, ctx, *args):
         """Show the list of users of gitgud with their scores."""
         
@@ -655,7 +655,7 @@ class Handles(commands.Cog):
         discord_file = get_gudgitters_image(rankings)
         await ctx.send(file=discord_file)
 
-    @handle.command(brief="Show all handles")
+    @handle.command(description="Show all handles")
     async def list(self, ctx, *countries):
         """Shows members of the server who have registered their handles and
         their Codeforces ratings. You can additionally specify a list of countries
@@ -678,7 +678,7 @@ class Handles(commands.Cog):
         paginator.paginate(self.bot, ctx.channel, pages, wait_time=_PAGINATE_WAIT_TIME,
                            set_pagenum_footers=True)
 
-    @handle.command(brief="Show handles, but prettier")
+    @handle.command(description="Show handles, but prettier")
     async def pretty(self, ctx, page_no: int = None):
         """Show members of the server who have registered their handles and their Codeforces
         ratings, in color.
@@ -831,20 +831,20 @@ class Handles(commands.Cog):
 
         return embeds
 
-    @commands.group(brief='Commands for role updates',
+    @commands.hybrid_group(description='Commands for role updates',
                     invoke_without_command=True)
     async def roleupdate(self, ctx):
         """Group for commands involving role updates."""
         await ctx.send_help(ctx.command)
 
-    @roleupdate.command(brief='Update Codeforces rank roles')
+    @roleupdate.command(description='Update Codeforces rank roles')
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def now(self, ctx):
         """Updates Codeforces rank roles for every member in this server."""
         await self._update_ranks_all(ctx.guild)
         await ctx.send(embed=discord_common.embed_success('Roles updated successfully.'))
 
-    @roleupdate.command(brief='Enable or disable auto role updates',
+    @roleupdate.command(description='Enable or disable auto role updates',
                         usage='on|off')
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def auto(self, ctx, arg):
@@ -865,7 +865,7 @@ class Handles(commands.Cog):
         else:
             raise ValueError(f"arg must be 'on' or 'off', got '{arg}' instead.")
 
-    @roleupdate.command(brief='Publish a rank update for the given contest',
+    @roleupdate.command(description='Publish a rank update for the given contest',
                         usage='here|off|contest_id')
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def publish(self, ctx, arg):
@@ -931,7 +931,7 @@ class Handles(commands.Cog):
         else:
             raise HandleCogError(f'Invalid action {action}')
 
-    @commands.command(brief='Grants or removes the specified pingable role',
+    @commands.hybrid_command(description='Grants or removes the specified pingable role',
                       usage='[give/remove] [vc/duel]')
     async def role(self, ctx, action: str, which: str):
         """e.g. ;role remove duel"""
