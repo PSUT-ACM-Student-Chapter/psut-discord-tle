@@ -90,23 +90,27 @@ def main():
     bot.setup_hook = setup_hook
 
     # 4. Standard TLE Database/API Startup
-    # Uncommented and restored the database initialization sequence
+    # Fixed the database initialization to properly bind to cf_common
     try:
-        db_file = os.environ.get('DB_FILE', 'tle.db')
-        db.initialize(db_file)
-        logging.info("✅ Database successfully initialized.")
-    except Exception as e:
-        logging.error(f"Failed to initialize database: {e}")
-
-    try:
-        # Also initialize codeforces_common which usually sets up caches and the user_db link
+        logging.info("Initializing Codeforces common utilities...")
         cf_common.initialize()
-        logging.info("✅ Codeforces common utilities successfully initialized.")
-    except AttributeError:
-        # Failsafe in case your specific TLE fork doesn't require this specific call
-        pass
+        
+        # Determine the database file path
+        db_file = os.environ.get('TLE_DB_FILE', os.environ.get('DB_FILE', 'tle.db'))
+        logging.info(f"Connecting to database: {db_file}")
+        
+        # This is the exact line missing that caused the 'NoneType' error
+        cf_common.user_db = db.UserDbConn(db_file)
+        logging.info("✅ User Database successfully initialized and bound.")
+        
+        # Initialize Cache2 database (Standard for TLE)
+        if hasattr(db, 'Cache2DbConn'):
+            cf_common.cache2 = db.Cache2DbConn(db_file)
+            cf_common.cache2.initialize()
+            logging.info("✅ Cache Database successfully initialized.")
+            
     except Exception as e:
-        logging.error(f"Failed to initialize codeforces_common: {e}")
+        logging.error(f"Failed to initialize database/utilities: {e}")
     
     # 5. Run the bot
     token = os.environ.get('BOT_TOKEN')
