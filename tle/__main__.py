@@ -7,6 +7,10 @@ from pathlib import Path
 import discord
 from discord.ext import commands
 
+# --- DISABLE SLASH COMMANDS (USE PREFIX ONLY) ---
+# The bot is configured to only use prefix commands (like ;cf profile).
+# This overrides any hybrid commands in the cogs to act as standard text commands,
+# preventing errors with *args and keeping the classic TLE experience.
 commands.hybrid_command = commands.command
 commands.hybrid_group = commands.group
 # ----------------------------------------
