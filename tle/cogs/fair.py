@@ -3,12 +3,8 @@ from discord.ext import commands
 import time
 from datetime import datetime, timedelta
 
-# Note: Adjust these imports based on your specific TLE fork's structure.
-# In standard TLE, the database and caches are usually accessed via cf_common.
-try:
-    from utils import cf_common
-except ImportError:
-    pass # Add your bot's specific database utility imports here
+# FIXED IMPORT: Directly import codeforces_common from tle.util
+from tle.util import codeforces_common as cf_common
 
 class FairLeaderboard(commands.Cog):
     def __init__(self, bot):
@@ -37,8 +33,7 @@ class FairLeaderboard(commands.Cog):
 
         # ------------------------------------------------------------------
         # INTEGRATION POINT: Fetching users and submissions.
-        # This uses standard TLE architecture. If your bot handles caching 
-        # differently, you will need to update these fetching lines.
+        # This uses standard TLE architecture.
         # ------------------------------------------------------------------
         try:
             # 1. Get all handles linked in this Discord server
