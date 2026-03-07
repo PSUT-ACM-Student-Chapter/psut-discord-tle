@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import time
 import logging
+import asyncio
 from datetime import datetime, timedelta
 
 # Directly import codeforces_common and codeforces_api from tle.util
@@ -13,6 +14,10 @@ logger = logging.getLogger(__name__)
 class FairLeaderboard(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # Cache to store leaderboards: (guild_id, days) -> (timestamp, embed)
+        self.leaderboard_cache = {}
+        # Cache duration in seconds (30 minutes)
+        self.CACHE_DURATION = 1800 
 
     def calculate_points(self, user_rating: int, problem_rating: int) -> float:
         """
@@ -35,8 +40,15 @@ class FairLeaderboard(commands.Cog):
         start_time = now - timedelta(days=days)
         start_timestamp = start_time.timestamp()
 
-        # Sanity check: Ensure the database and caches are actually loaded before proceeding
-        if getattr(cf_common, 'user_db', None) is None or getattr(cf_common, 'cache2', None) is None:
+        # Check cache first to respond instantly if recently requested
+        cache_key = (ctx.guild.id, days)
+        if cache_key in self.leaderboard_cache:
+            cache_time, cached_embed = self.leaderboard_cache[cache_key]
+            if time.time() - cache_time < self.CACHE_DURATION:
+                return cached_embed
+
+        # Sanity check: Ensure the database is actually loaded before proceeding
+        if getattr(cf_common, 'user_db', None) is None:
             return discord.Embed(
                 title=title, 
                 description="⏳ The Codeforces database is still initializing. Please try again in a moment!", 
@@ -45,7 +57,7 @@ class FairLeaderboard(commands.Cog):
 
         # ------------------------------------------------------------------
         # INTEGRATION POINT: Fetching users and submissions.
-        # This uses standard TLE architecture (internal memory cache).
+        # This uses concurrent API fetching for maximum speed.
         # ------------------------------------------------------------------
         try:
             # 1. Get all handles linked in this Discord server
@@ -57,19 +69,29 @@ class FairLeaderboard(commands.Cog):
             handle_strings = [handle for _, handle in handles]
             
             # 2. Fetch the Codeforces User objects directly from the API to get current ratings
-            # This is a single, bulk API request so it is very fast.
             cf_users = await cf.user.info(handles=handle_strings)
             user_ratings = {u.handle: u.rating for u in cf_users}
             
             leaderboard = []
             
-            # 3. Iterate through each registered user
+            # 3. Fetch all submissions CONCURRENTLY. This is massively faster than doing it one by one.
+            async def get_subs(handle):
+                try:
+                    # TLE's wrapper automatically handles Codeforces rate limits efficiently
+                    return handle, await cf.user.status(handle=handle)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch subs for {handle}: {e}")
+                    return handle, []
+
+            # Gather all requests at once
+            tasks = [get_subs(handle) for handle in handle_strings]
+            results = await asyncio.gather(*tasks)
+            subs_by_handle = dict(results)
+            
+            # 4. Iterate through each registered user and calculate scores
             for _, handle in handles:
                 rating = user_ratings.get(handle, 800)
-                
-                # Fetch their submissions directly from TLE's lightning-fast memory cache
-                # instead of hitting the Codeforces API for every single user.
-                subs = cf_common.cache2.submission_cache.get_submissions(handle)
+                subs = subs_by_handle.get(handle, [])
                 
                 if not subs:
                     continue
@@ -103,7 +125,7 @@ class FairLeaderboard(commands.Cog):
             logger.exception("Error generating fair leaderboard")
             return discord.Embed(
                 title="Error Generating Leaderboard", 
-                description=f"An error occurred accessing the database or API: `{e}`\nPlease check your server console for the full traceback.", 
+                description=f"An error occurred accessing the API: `{e}`\nPlease check your server console for the traceback.", 
                 color=discord.Color.red()
             )
 
@@ -123,7 +145,11 @@ class FairLeaderboard(commands.Cog):
             desc = "No one has solved any problems in this time period. Time to get to work!"
             
         embed = discord.Embed(title=title, description=desc, color=discord.Color.gold())
-        embed.set_footer(text=f"Points heavily reward solving harder problems based on user rating!")
+        embed.set_footer(text=f"Points reward solving harder problems based on rating! (Updates every 30m)")
+        
+        # Save to cache
+        self.leaderboard_cache[cache_key] = (time.time(), embed)
+        
         return embed
 
     @commands.command(name='weekly_solve', aliases=['fwgg', 'wsp'])
