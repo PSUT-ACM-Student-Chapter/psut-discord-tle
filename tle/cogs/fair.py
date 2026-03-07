@@ -4,8 +4,9 @@ import time
 import logging
 from datetime import datetime, timedelta
 
-# Directly import codeforces_common from tle.util
+# Directly import codeforces_common and codeforces_api from tle.util
 from tle.util import codeforces_common as cf_common
+from tle.util import codeforces_api as cf
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class FairLeaderboard(commands.Cog):
 
         # ------------------------------------------------------------------
         # INTEGRATION POINT: Fetching users and submissions.
-        # This uses standard TLE architecture.
+        # This uses standard TLE architecture (codeforces_api module).
         # ------------------------------------------------------------------
         try:
             # 1. Get all handles linked in this Discord server
@@ -52,8 +53,11 @@ class FairLeaderboard(commands.Cog):
             if not handles:
                 return discord.Embed(title=title, description="No handles registered in this server.", color=discord.Color.red())
             
-            # 2. Fetch the Codeforces User objects to get current ratings
-            cf_users = await cf_common.user_cache.get_users([handle for _, handle in handles])
+            # Extract just the string handles from the DB tuples
+            handle_strings = [handle for _, handle in handles]
+            
+            # 2. Fetch the Codeforces User objects directly from the API to get current ratings
+            cf_users = await cf.user.info(handles=handle_strings)
             user_ratings = {u.handle: u.rating for u in cf_users}
             
             leaderboard = []
@@ -62,8 +66,9 @@ class FairLeaderboard(commands.Cog):
             for _, handle in handles:
                 rating = user_ratings.get(handle, 800)
                 
-                # Fetch their submissions from the cache
-                subs = await cf_common.cache2.submission_cache.get_submissions(handle)
+                # Fetch their submissions directly from the API
+                # (TLE's API wrapper automatically handles rate-limiting for us)
+                subs = await cf.user.status(handle=handle)
                 
                 solved_problems = set()
                 total_points = 0.0
@@ -94,7 +99,7 @@ class FairLeaderboard(commands.Cog):
             logger.exception("Error generating fair leaderboard")
             return discord.Embed(
                 title="Error Generating Leaderboard", 
-                description=f"An error occurred accessing the database: `{e}`\nMake sure the TLE `cf_common` module is correctly imported.", 
+                description=f"An error occurred accessing the database or API: `{e}`\nPlease check your server console for the full traceback.", 
                 color=discord.Color.red()
             )
 
