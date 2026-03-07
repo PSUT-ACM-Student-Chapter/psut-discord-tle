@@ -7,13 +7,23 @@ from pathlib import Path
 import discord
 from discord.ext import commands
 
-# Standard TLE Imports (Keep any other imports you currently have)
+commands.hybrid_command = commands.command
+commands.hybrid_group = commands.group
+# ----------------------------------------
+
+# CRITICAL FIX: codeforces_common MUST be imported before discord_common
+# to prevent circular imports between codeforces_api and ranklist.
+from tle.util import codeforces_common as cf_common
 from tle.util import discord_common
 from tle.util import db
 
+# ---------------------------------------------------------
+# 1. CUSTOM BOT CLASS FOR SHUTDOWN MESSAGE
+# ---------------------------------------------------------
 class TLEBot(commands.Bot):
     async def close(self):
-        channel_id = os.environ.get('CHANNEL_ID')
+        # IMPORTANT: Replace this with your actual Discord channel ID!
+        channel_id = 123456789012345678  
         channel = self.get_channel(channel_id)
         
         if channel:
@@ -39,6 +49,7 @@ class TLEBot(commands.Bot):
         
         # Proceed with the actual shutdown process
         await super().close()
+# ---------------------------------------------------------
 
 def main():
     # 1. Setup Intents (Crucial for discord.py 2.0+)
