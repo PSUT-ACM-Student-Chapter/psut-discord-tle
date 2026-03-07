@@ -1,0 +1,15 @@
+# move this to /etc/systemd/system/psuttle.service
+[Unit]
+Description=TLE Discord Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/psut-discord-tle
+ExecStart=/bin/bash /home/ubuntu/psut-discord-tle/run.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
