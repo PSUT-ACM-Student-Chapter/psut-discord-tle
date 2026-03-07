@@ -137,8 +137,10 @@ class FairLeaderboard(commands.Cog):
         
         # Connect to a dedicated SQLite database just for caching fair leaderboards
         self.db_conn = sqlite3.connect('fair_cache.db')
+        
+        # Changed table to cache_v2 to invalidate old image formats automatically
         self.db_conn.execute('''
-            CREATE TABLE IF NOT EXISTS cache (
+            CREATE TABLE IF NOT EXISTS cache_v2 (
                 guild_id INTEGER,
                 days INTEGER,
                 timestamp REAL,
@@ -176,7 +178,7 @@ class FairLeaderboard(commands.Cog):
 
         # Check SQLite cache first to respond instantly if recently requested
         cached_row = self.db_conn.execute(
-            'SELECT timestamp, embed_dict, image_bytes FROM cache WHERE guild_id = ? AND days = ?', 
+            'SELECT timestamp, embed_dict, image_bytes FROM cache_v2 WHERE guild_id = ? AND days = ?', 
             (ctx.guild.id, days)
         ).fetchone()
 
@@ -283,7 +285,7 @@ class FairLeaderboard(commands.Cog):
             embed = discord.Embed(title=title, description="No one has solved any problems in this time period. Time to get to work!", color=discord.Color.gold())
             # Save empty board to SQLite cache
             self.db_conn.execute(
-                'INSERT OR REPLACE INTO cache (guild_id, days, timestamp, embed_dict, image_bytes) VALUES (?, ?, ?, ?, ?)',
+                'INSERT OR REPLACE INTO cache_v2 (guild_id, days, timestamp, embed_dict, image_bytes) VALUES (?, ?, ?, ?, ?)',
                 (ctx.guild.id, days, time.time(), json.dumps(embed.to_dict()), None)
             )
             self.db_conn.commit()
@@ -306,7 +308,7 @@ class FairLeaderboard(commands.Cog):
         
         # Save beautifully rendered board to SQLite cache
         self.db_conn.execute(
-            'INSERT OR REPLACE INTO cache (guild_id, days, timestamp, embed_dict, image_bytes) VALUES (?, ?, ?, ?, ?)',
+            'INSERT OR REPLACE INTO cache_v2 (guild_id, days, timestamp, embed_dict, image_bytes) VALUES (?, ?, ?, ?, ?)',
             (ctx.guild.id, days, time.time(), json.dumps(embed.to_dict()), image_bytes)
         )
         self.db_conn.commit()
