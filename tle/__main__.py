@@ -90,9 +90,23 @@ def main():
     bot.setup_hook = setup_hook
 
     # 4. Standard TLE Database/API Startup
-    # (Keep whatever database initialization code you currently have here)
-    # db_file = os.environ.get('DB_FILE', 'tle.db')
-    # db.initialize(db_file)
+    # Uncommented and restored the database initialization sequence
+    try:
+        db_file = os.environ.get('DB_FILE', 'tle.db')
+        db.initialize(db_file)
+        logging.info("✅ Database successfully initialized.")
+    except Exception as e:
+        logging.error(f"Failed to initialize database: {e}")
+
+    try:
+        # Also initialize codeforces_common which usually sets up caches and the user_db link
+        cf_common.initialize()
+        logging.info("✅ Codeforces common utilities successfully initialized.")
+    except AttributeError:
+        # Failsafe in case your specific TLE fork doesn't require this specific call
+        pass
+    except Exception as e:
+        logging.error(f"Failed to initialize codeforces_common: {e}")
     
     # 5. Run the bot
     token = os.environ.get('BOT_TOKEN')
