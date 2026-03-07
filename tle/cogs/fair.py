@@ -35,8 +35,8 @@ class FairLeaderboard(commands.Cog):
         start_time = now - timedelta(days=days)
         start_timestamp = start_time.timestamp()
 
-        # Sanity check: Ensure the database is actually loaded before proceeding
-        if getattr(cf_common, 'user_db', None) is None:
+        # Sanity check: Ensure the database and caches are actually loaded before proceeding
+        if getattr(cf_common, 'user_db', None) is None or getattr(cf_common, 'cache2', None) is None:
             return discord.Embed(
                 title=title, 
                 description="⏳ The Codeforces database is still initializing. Please try again in a moment!", 
@@ -45,7 +45,7 @@ class FairLeaderboard(commands.Cog):
 
         # ------------------------------------------------------------------
         # INTEGRATION POINT: Fetching users and submissions.
-        # This uses standard TLE architecture (codeforces_api module).
+        # This uses standard TLE architecture (internal memory cache).
         # ------------------------------------------------------------------
         try:
             # 1. Get all handles linked in this Discord server
@@ -57,6 +57,7 @@ class FairLeaderboard(commands.Cog):
             handle_strings = [handle for _, handle in handles]
             
             # 2. Fetch the Codeforces User objects directly from the API to get current ratings
+            # This is a single, bulk API request so it is very fast.
             cf_users = await cf.user.info(handles=handle_strings)
             user_ratings = {u.handle: u.rating for u in cf_users}
             
@@ -66,9 +67,12 @@ class FairLeaderboard(commands.Cog):
             for _, handle in handles:
                 rating = user_ratings.get(handle, 800)
                 
-                # Fetch their submissions directly from the API
-                # (TLE's API wrapper automatically handles rate-limiting for us)
-                subs = await cf.user.status(handle=handle)
+                # Fetch their submissions directly from TLE's lightning-fast memory cache
+                # instead of hitting the Codeforces API for every single user.
+                subs = cf_common.cache2.submission_cache.get_submissions(handle)
+                
+                if not subs:
+                    continue
                 
                 solved_problems = set()
                 total_points = 0.0
