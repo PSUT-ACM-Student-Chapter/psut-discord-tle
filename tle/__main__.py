@@ -1,11 +1,21 @@
+import argparse
 import asyncio
+import distutils.util
 import logging
 import os
 import random  # Added for the random messages
+import discord
+from logging.handlers import TimedRotatingFileHandler
+from os import environ
 from pathlib import Path
 
-import discord
+import seaborn as sns
 from discord.ext import commands
+from matplotlib import pyplot as plt
+
+from tle import constants
+from tle.util import codeforces_common as cf_common
+from tle.util import discord_common, font_downloader
 
 # --- DISABLE SLASH COMMANDS (USE PREFIX ONLY) ---
 # The bot is configured to only use prefix commands (like ;cf profile).
@@ -14,12 +24,6 @@ from discord.ext import commands
 commands.hybrid_command = commands.command
 commands.hybrid_group = commands.group
 # ----------------------------------------
-
-# CRITICAL FIX: codeforces_common MUST be imported before discord_common
-# to prevent circular imports between codeforces_api and ranklist.
-from tle.util import codeforces_common as cf_common
-from tle.util import discord_common
-from tle.util import db
 
 # ---------------------------------------------------------
 # 1. CUSTOM BOT CLASS FOR SHUTDOWN MESSAGE
@@ -60,86 +64,86 @@ class TLEBot(commands.Bot):
         await super().close()
 # ---------------------------------------------------------
 
-def main():
-    # 1. Setup Intents (Crucial for discord.py 2.0+)
-    # Without message_content=True, your ';' prefix commands will stop working!
-    intents = discord.Intents.default()
-    intents.message_content = True  
-    intents.members = True          
+def setup():
+    # Make required directories.
+    for path in constants.ALL_DIRS:
+        os.makedirs(path, exist_ok=True)
 
-    # 2. Initialize the Bot using the new TLEBot class
-    bot = TLEBot(
-        command_prefix=commands.when_mentioned_or(discord_common._BOT_PREFIX),
-        intents=intents,
-        help_command=discord_common.TleHelp() # Keep your custom help command for ';'
-    )
+    # logging to console and file on daily interval
+    logging.basicConfig(format='{asctime}:{levelname}:{name}:{message}', style='{',
+                        datefmt='%d-%m-%Y %H:%M:%S', level=logging.INFO,
+                        handlers=[logging.StreamHandler(),
+                                  TimedRotatingFileHandler(constants.LOG_FILE_PATH, when='D',
+                                                           backupCount=3, utc=True)])
 
-    # 3. The Setup Hook (This is where the magic happens)
-    async def setup_hook():
-        logging.info("Starting setup hook...")
-        
-        # Load all cogs asynchronously using your loop
-        cogs = [file.stem for file in Path('tle', 'cogs').glob('*.py')]
-        for extension in cogs:
-            try:
-                await bot.load_extension(f'tle.cogs.{extension}')
-                logging.info(f'Loaded extension: {extension}')
-            except Exception as e:
-                logging.error(f'Failed to load extension {extension}: {e}')
+    # matplotlib and seaborn
+    plt.rcParams['figure.figsize'] = 7.0, 3.5
+    sns.set()
+    options = {
+        'axes.edgecolor': '#A0A0C5',
+        'axes.spines.top': False,
+        'axes.spines.right': False,
+    }
+    sns.set_style('darkgrid', options)
 
-        # Sync the hybrid commands to Discord so the '/' menu shows up
-        # await bot.tree.sync()
-        # logging.info("✅ Slash commands successfully synced to Discord!")
+    # Download fonts if necessary
+    font_downloader.maybe_download()
 
-    # Attach the setup hook to the bot
-    bot.setup_hook = setup_hook
 
-    # 4. Standard TLE Database/API Startup
-    try:
-        db_file = os.environ.get('TLE_DB_FILE', os.environ.get('DB_FILE', 'tle.db'))
-        logging.info(f"Connecting to database: {db_file}")
-        
-        # 1. Bind user_db to cf_common (Crucial fix for 'NoneType' errors)
-        if hasattr(db, 'UserDbConn'):
-            cf_common.user_db = db.UserDbConn(db_file)
-            logging.info("✅ User Database bound successfully.")
-        else:
-            logging.error("db.UserDbConn not found in your fork!")
-            
-        # 2. Bind the Cache database safely depending on your fork's version
-        if hasattr(db, 'Cache2DbConn'):
-            cf_common.cache2 = db.Cache2DbConn(db_file)
-            logging.info("✅ Cache2 Database bound.")
-        elif hasattr(db, 'CacheDbConn'):
-            cf_common.cache2 = db.CacheDbConn(db_file)
-            logging.info("✅ Cache Database bound.")
-            
-        # 3. Safely initialize cf_common utilities
-        if hasattr(cf_common, 'initialize'):
-            import inspect
-            sig = inspect.signature(cf_common.initialize)
-            try:
-                # Some forks require args, some require none. This handles both!
-                if len(sig.parameters) > 0:
-                    cf_common.initialize(cf_common.user_db, getattr(cf_common, 'cache2', None))
-                else:
-                    cf_common.initialize()
-                logging.info("✅ Codeforces utilities successfully initialized.")
-            except Exception as e:
-                logging.warning(f"cf_common.initialize warning (safe to ignore if cogs work): {e}")
+async def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--nodb', action='store_true')
+    args = parser.parse_args()
 
-    except Exception as e:
-        logging.error(f"Failed to initialize database/utilities: {e}")
-    
-    # 5. Run the bot
-    token = os.environ.get('BOT_TOKEN')
+    token = environ.get('BOT_TOKEN')
     if not token:
-        logging.error('BOT_TOKEN environment variable not found!')
+        logging.error('Token required')
         return
 
-    bot.run(token)
+    setup()
+    
+    intents = discord.Intents.default()
+    intents.members = True
+    intents.message_content = True
+
+    # Use the custom TLEBot class instead of standard commands.Bot
+    bot = TLEBot(command_prefix=commands.when_mentioned_or(discord_common._BOT_PREFIX), intents=intents)
+    bot.help_command = discord_common.TleHelp()
+    cogs = [file.stem for file in Path('tle', 'cogs').glob('*.py')]
+    for extension in cogs:
+        await bot.load_extension(f'tle.cogs.{extension}')
+    logging.info(f'Cogs loaded: {", ".join(bot.cogs)}')
+
+    def no_dm_check(ctx):
+        if ctx.guild is None:
+            raise commands.NoPrivateMessage('Private messages not permitted.')
+        return True
+
+    def channel_check(ctx):
+        # Allow checking either CHANNEL_IDS or CHANNEL_ID for backward compatibility
+        channel_ids_str = os.environ.get("CHANNEL_IDS", os.environ.get("CHANNEL_ID"))
+        if channel_ids_str:
+            # Parse multiple channels separated by commas and remove empty spaces
+            channel_ids = [int(cid.strip()) for cid in channel_ids_str.split(",") if cid.strip().isdigit()]
+            return ctx.channel.id in channel_ids
+        return True
+
+    # Restrict bot usage to inside guild channels only.
+    bot.add_check(no_dm_check)
+    
+    # Restrict bot usage to specific channels if CHANNEL_IDS is set.
+    # bot.add_check(channel_check)
+
+    # cf_common.initialize needs to run first, so it must be set as the bot's
+    # on_ready event handler rather than an on_ready listener.
+    @discord_common.on_ready_event_once(bot)
+    async def init():
+        await cf_common.initialize(args.nodb)
+        asyncio.create_task(discord_common.presence(bot))
+
+    bot.add_listener(discord_common.bot_error_handler, name='on_command_error')
+    await bot.start(token)
+
 
 if __name__ == '__main__':
-    # Basic logging setup
-    logging.basicConfig(level=logging.INFO)
-    main()
+     asyncio.run(main())
