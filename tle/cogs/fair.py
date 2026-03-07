@@ -7,6 +7,8 @@ import io
 import html
 import cairo
 import gi
+import sqlite3
+import json
 from datetime import datetime, timedelta
 
 gi.require_version('Pango', '1.0')
@@ -126,13 +128,30 @@ def get_fair_leaderboard_image(rankings):
     surface.write_to_png(image_data)
     return image_data.getvalue()
 
+
 class FairLeaderboard(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Cache to store leaderboards: (guild_id, days) -> (timestamp, embed_dict, image_bytes)
-        self.leaderboard_cache = {}
         # Cache duration in seconds (30 minutes)
         self.CACHE_DURATION = 1800 
+        
+        # Connect to a dedicated SQLite database just for caching fair leaderboards
+        self.db_conn = sqlite3.connect('fair_cache.db')
+        self.db_conn.execute('''
+            CREATE TABLE IF NOT EXISTS cache (
+                guild_id INTEGER,
+                days INTEGER,
+                timestamp REAL,
+                embed_dict TEXT,
+                image_bytes BLOB,
+                PRIMARY KEY (guild_id, days)
+            )
+        ''')
+        self.db_conn.commit()
+
+    def cog_unload(self):
+        # Safely close the database connection when the bot/cog shuts down
+        self.db_conn.close()
 
     def calculate_points(self, user_rating: int, problem_rating: int) -> float:
         """
@@ -155,12 +174,16 @@ class FairLeaderboard(commands.Cog):
         start_time = now - timedelta(days=days)
         start_timestamp = start_time.timestamp()
 
-        # Check cache first to respond instantly if recently requested
-        cache_key = (ctx.guild.id, days)
-        if cache_key in self.leaderboard_cache:
-            cache_time, cached_embed_dict, cached_image_bytes = self.leaderboard_cache[cache_key]
+        # Check SQLite cache first to respond instantly if recently requested
+        cached_row = self.db_conn.execute(
+            'SELECT timestamp, embed_dict, image_bytes FROM cache WHERE guild_id = ? AND days = ?', 
+            (ctx.guild.id, days)
+        ).fetchone()
+
+        if cached_row:
+            cache_time, cached_embed_dict, cached_image_bytes = cached_row
             if time.time() - cache_time < self.CACHE_DURATION:
-                embed = discord.Embed.from_dict(cached_embed_dict)
+                embed = discord.Embed.from_dict(json.loads(cached_embed_dict))
                 discord_file = discord.File(io.BytesIO(cached_image_bytes), filename='fair_leaderboard.png') if cached_image_bytes else None
                 return embed, discord_file
 
@@ -258,8 +281,12 @@ class FairLeaderboard(commands.Cog):
         
         if not leaderboard:
             embed = discord.Embed(title=title, description="No one has solved any problems in this time period. Time to get to work!", color=discord.Color.gold())
-            # Save to cache with None for image_bytes
-            self.leaderboard_cache[cache_key] = (time.time(), embed.to_dict(), None)
+            # Save empty board to SQLite cache
+            self.db_conn.execute(
+                'INSERT OR REPLACE INTO cache (guild_id, days, timestamp, embed_dict, image_bytes) VALUES (?, ?, ?, ?, ?)',
+                (ctx.guild.id, days, time.time(), json.dumps(embed.to_dict()), None)
+            )
+            self.db_conn.commit()
             return embed, None
 
         rankings = []
@@ -277,8 +304,12 @@ class FairLeaderboard(commands.Cog):
         embed.set_image(url="attachment://fair_leaderboard.png")
         embed.set_footer(text=f"Points reward solving harder problems based on rating! (Updates every 30m)")
         
-        # Save to cache
-        self.leaderboard_cache[cache_key] = (time.time(), embed.to_dict(), image_bytes)
+        # Save beautifully rendered board to SQLite cache
+        self.db_conn.execute(
+            'INSERT OR REPLACE INTO cache (guild_id, days, timestamp, embed_dict, image_bytes) VALUES (?, ?, ?, ?, ?)',
+            (ctx.guild.id, days, time.time(), json.dumps(embed.to_dict()), image_bytes)
+        )
+        self.db_conn.commit()
         
         return embed, discord_file
 
