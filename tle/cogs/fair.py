@@ -1,10 +1,13 @@
 import discord
 from discord.ext import commands
 import time
+import logging
 from datetime import datetime, timedelta
 
-# FIXED IMPORT: Directly import codeforces_common from tle.util
+# Directly import codeforces_common from tle.util
 from tle.util import codeforces_common as cf_common
+
+logger = logging.getLogger(__name__)
 
 class FairLeaderboard(commands.Cog):
     def __init__(self, bot):
@@ -30,6 +33,14 @@ class FairLeaderboard(commands.Cog):
         now = datetime.utcnow()
         start_time = now - timedelta(days=days)
         start_timestamp = start_time.timestamp()
+
+        # Sanity check: Ensure the database is actually loaded before proceeding
+        if getattr(cf_common, 'user_db', None) is None:
+            return discord.Embed(
+                title=title, 
+                description="⏳ The Codeforces database is still initializing. Please try again in a moment!", 
+                color=discord.Color.orange()
+            )
 
         # ------------------------------------------------------------------
         # INTEGRATION POINT: Fetching users and submissions.
@@ -80,6 +91,7 @@ class FairLeaderboard(commands.Cog):
                     })
                     
         except Exception as e:
+            logger.exception("Error generating fair leaderboard")
             return discord.Embed(
                 title="Error Generating Leaderboard", 
                 description=f"An error occurred accessing the database: `{e}`\nMake sure the TLE `cf_common` module is correctly imported.", 
