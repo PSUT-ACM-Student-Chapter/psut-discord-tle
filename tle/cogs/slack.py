@@ -5,14 +5,9 @@ import time
 from collections import defaultdict
 import datetime
 
-# Assuming standard TLE imports are available in your environment.
-# You may need to adjust these imports based on your exact TLE fork structure.
-try:
-    from codeforces_core.queries import user_status
-    from utils import cf_common
-except ImportError:
-    # Fallback/mock for the sake of script structure if running outside TLE
-    pass
+# Import standard TLE utilities based on your bot's structure
+from tle.util import codeforces_common as cf_common
+from tle.util import codeforces_api as cf
 
 class Slacker(commands.Cog):
     def __init__(self, bot):
@@ -67,10 +62,10 @@ class Slacker(commands.Cog):
 
         # 1. Get all handles registered in this Discord server from TLE's database
         try:
-            users = cf_common.user_db.get_cf_users_for_guild(ctx.guild.id)
-            handles = [user.handle for user in users]
+            # Using get_handles_for_guild based on your codeforces_common.py
+            handles = [handle for discord_id, handle in cf_common.user_db.get_handles_for_guild(ctx.guild.id)]
         except Exception as e:
-            return await ctx.send("❌ Error fetching users from database. Ensure `cf_common` is accessible.")
+            return await ctx.send(f"❌ Error fetching users from database: {str(e)}")
 
         if not handles:
             return await ctx.send("No Codeforces handles are registered in this server.")
@@ -83,8 +78,8 @@ class Slacker(commands.Cog):
         # 2. Iterate through each handle and fetch their submissions
         for handle in handles:
             try:
-                # Fetch user status using TLE's standard API wrapper
-                submissions = await cf_common.user_status(handle=handle)
+                # Fetch user status using TLE's API wrapper
+                submissions = await cf.user.status(handle=handle)
             except Exception:
                 continue # Skip if API fails for a user (e.g., handle changed/deleted)
 
@@ -151,5 +146,6 @@ class Slacker(commands.Cog):
         await calculating_msg.delete()
         await ctx.send(embed=embed)
 
+# Updated to use async def setup as required by newer discord.py versions
 async def setup(bot):
     await bot.add_cog(Slacker(bot))
