@@ -30,7 +30,7 @@ class Motivation(commands.Cog):
                     "Consistency is key! You're making progress even when it doesn't feel like it. Keep grinding! ✨",
                     "Even the best LGMs started with a lot of ';-;' moments. You're on your way! 🚀",
                     "Take a walk, clear your mind. Sometimes the best logic comes when you aren't looking at the screen. 🌳",
-                    ""كل الافكار بتطلع حلول بالاخير" yousef 2026"
+                    "كل الافكار بتطلع حلول بالاخير"
                 ]
             else:
                 # Harsh / "Tough Love" messages pool
