@@ -12,6 +12,26 @@ from tle.util import codeforces_api as cf
 class Slacker(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # Cache to prevent spamming the Codeforces API
+        self.submission_cache = {}
+        # Cache Time-To-Live in seconds (3600 seconds = 1 hour)
+        self.cache_ttl = 3600
+
+    async def _get_ac_submissions(self, handle):
+        now = time.time()
+        # 1. Check if we have valid cached data
+        if handle in self.submission_cache:
+            cache_time, ac_subs = self.submission_cache[handle]
+            if now - cache_time < self.cache_ttl:
+                return ac_subs
+
+        # 2. If no valid cache, fetch from Codeforces API
+        submissions = await cf.user.status(handle=handle)
+        ac_subs = [sub for sub in submissions if sub.verdict == 'OK']
+        
+        # 3. Save to cache with the current timestamp
+        self.submission_cache[handle] = (now, ac_subs)
+        return ac_subs
 
     def _calculate_slacker_metrics(self, history_counts, current_count, z_threshold=-1.0, grace_minimum=5):
         """
@@ -49,13 +69,14 @@ class Slacker(commands.Cog):
 
         return is_slacking, mu, sigma, z_score
 
-    @commands.command(brief="Mathematically calculates who is slacking in training", usage="[weeks_history] [z_threshold]")
-    async def slackers(self, ctx, weeks_history: int = 10, z_threshold: float = -1.0):
+    @commands.command(brief="Mathematically calculates who is slacking in training", usage="[weeks_history] [z_threshold] [grace_minimum]")
+    async def slackers(self, ctx, weeks_history: int = 10, z_threshold: float = -0.5, grace_minimum: int = 2):
         """
         Finds out who is slacking based on a standard deviation curve of their own past performance.
         
         weeks_history: How many past weeks to analyze to build the curve (default 10).
-        z_threshold: How many standard deviations below their mean to trigger 'slacking' (default -1.0).
+        z_threshold: How many standard dev below mean triggers 'slacking' (closer to 0.0 is stricter, default -0.5).
+        grace_minimum: Absolute minimum problems to be completely safe from slacking (default 2).
         """
         # Notify user that the heavy mathematical lifting is starting
         calculating_msg = await ctx.send("📊 Crunching the historical data and building performance curves...")
@@ -78,13 +99,10 @@ class Slacker(commands.Cog):
         # 2. Iterate through each handle and fetch their submissions
         for handle in handles:
             try:
-                # Fetch user status using TLE's API wrapper
-                submissions = await cf.user.status(handle=handle)
+                # Use our cached helper instead of hitting the API directly every time
+                ac_submissions = await self._get_ac_submissions(handle)
             except Exception:
                 continue # Skip if API fails for a user (e.g., handle changed/deleted)
-
-            # Filter for only "OK" (Accepted) submissions
-            ac_submissions = [sub for sub in submissions if sub.verdict == 'OK']
 
             # Group submissions into weeks relative to right now
             weekly_solves = defaultdict(set) # Using a set to count unique problems solved
@@ -108,7 +126,7 @@ class Slacker(commands.Cog):
                 history_counts=historical_counts, 
                 current_count=current_week_count,
                 z_threshold=z_threshold,
-                grace_minimum=5  # Change this to whatever absolute minimum you deem acceptable
+                grace_minimum=grace_minimum  # Now uses the command parameter!
             )
 
             if is_slacking:
@@ -124,8 +142,8 @@ class Slacker(commands.Cog):
         embed = discord.Embed(
             title="📉 Slacker Report (Z-Score Analysis)", 
             description=f"Based on personal performance curves over the last `{weeks_history} weeks`.\n"
-                        f"*Threshold: Z-Score ≤ `{z_threshold}` (Bottom ~16% of their usual output).* \n"
-                        f"*Grace minimum: 5 problems.*",
+                        f"*Threshold: Z-Score ≤ `{z_threshold}`.* \n"
+                        f"*Grace minimum: `{grace_minimum}` problems.*",
             color=discord.Color.red()
         )
 
