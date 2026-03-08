@@ -1,5 +1,6 @@
 import discord
 import random
+import time
 from discord.ext import commands
 
 class Pxl(commands.Cog):
@@ -32,19 +33,34 @@ class Pxl(commands.Cog):
         greeting = random.choice(greetings)
         fun_fact = random.choice(fun_facts)
 
-        # Construct the embed for a "premium" feel
-        embed = discord.Header(title="PXL Reporting for Duty! 🤖", color=discord.Color.blue())
+        # Check latency to help debug those heartbeat issues you saw in the logs
+        latency = round(self.bot.latency * 1000)
+        status_color = discord.Color.green() if latency < 200 else discord.Color.gold()
+        if latency > 500: status_color = discord.Color.red()
+
+        # Construct the embed
+        embed = discord.Embed(
+            title="PXL Reporting for Duty! 🤖", 
+            description=f"**{greeting}**",
+            color=status_color
+        )
         
-        # Build the message content
-        response = (
-            f"**{greeting}**\n\n"
-            f"✨ **How to use me:**\n"
-            "• Use `;help` to see my massive list of CP superpowers.\n"
-            "• Haven't registered yet? Use `;handle identify <your_handle>` so I can track your glory!\n\n"
-            f"💡 **Bot Wisdom:**\n*{fun_fact}*"
+        embed.add_field(
+            name="✨ How to use me", 
+            value="• Use `;help` to see my massive list of CP superpowers.\n"
+                  "• Haven't registered? Use `;handle identify <your_handle>`!",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="💡 Bot Wisdom", 
+            value=f"*{fun_fact}*",
+            inline=False
         )
 
-        await ctx.send(response)
+        embed.set_footer(text=f"Heartbeat Latency: {latency}ms | PSUT ACM Edition")
+
+        await ctx.send(embed=embed)
 
 # This setup function is required for discord.ext.commands to load the Cog
 async def setup(bot):
