@@ -27,6 +27,8 @@ class Slacker(commands.Cog):
 
         # 2. If no valid cache, fetch from Codeforces API
         submissions = await cf.user.status(handle=handle)
+        
+        # This explicitly guarantees only Accepted ('OK') questions are considered
         ac_subs = [sub for sub in submissions if sub.verdict == 'OK']
         
         # 3. Save to cache with the current timestamp
@@ -60,11 +62,16 @@ class Slacker(commands.Cog):
         # 5. Calculate Z-Score (The Curve)
         if sigma == 0:
             # If they are perfectly consistent (σ=0), they slack if they fall below their exact mean.
-            z_score = -99.9 if current_count < mu else 0.0
-            is_slacking = current_count < mu
+            # CRITICAL FIX: If their mean is exactly 0 (a dead account) and they solved 0, they are slacking!
+            if mu == 0 and current_count == 0:
+                z_score = -99.9
+                is_slacking = True
+            else:
+                z_score = -99.9 if current_count < mu else 0.0
+                is_slacking = current_count < mu
         else:
             z_score = (current_count - mu) / sigma
-            # In a normal distribution curve, a z-score <= -1.0 is roughly the bottom 16% of their performance
+            # In a normal distribution curve, a z-score <= threshold flags them
             is_slacking = z_score <= z_threshold
 
         return is_slacking, mu, sigma, z_score
