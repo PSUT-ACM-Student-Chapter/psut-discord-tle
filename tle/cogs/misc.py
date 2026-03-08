@@ -5,7 +5,7 @@ class Prizes(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.hybrid_command(name='where', help='just prizes')
+    @commands.hybrid_command(name='where', help='just prizes, try where are prizes ;where is the prizes')
     async def where_command(self, ctx, *args):
         # Join the extra words together and make them lowercase
         phrase = " ".join(args).lower()
