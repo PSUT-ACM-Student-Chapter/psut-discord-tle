@@ -2,10 +2,124 @@ import random
 import datetime
 import discord
 from discord.ext import commands
+import io
+import html
+import cairo
+import gi
+gi.require_version('Pango', '1.0')
+gi.require_version('PangoCairo', '1.0')
+from gi.repository import Pango, PangoCairo
 
 from tle import constants
 from tle.util import codeforces_api as cf
 from tle.util import codeforces_common as cf_common
+
+FONTS = [
+    'Noto Sans',
+    'Noto Sans CJK JP',
+    'Noto Sans CJK SC',
+    'Noto Sans CJK TC',
+    'Noto Sans CJK HK',
+    'Noto Sans CJK KR',
+]
+
+def rating_to_color(rating):
+    """returns (r, g, b) pixels values corresponding to rating"""
+    BLACK = (10, 10, 10)
+    RED = (255, 20, 20)
+    BLUE = (0, 0, 200)
+    GREEN = (0, 140, 0)
+    ORANGE = (250, 140, 30)
+    PURPLE = (160, 0, 120)
+    CYAN = (0, 165, 170)
+    GREY = (70, 70, 70)
+    if rating is None or rating == 'N/A':
+        return BLACK
+    if rating < 1200:
+        return GREY
+    if rating < 1400:
+        return GREEN
+    if rating < 1600:
+        return CYAN
+    if rating < 1900:
+        return BLUE
+    if rating < 2100:
+        return PURPLE
+    if rating < 2400:
+        return ORANGE
+    return RED
+
+def get_fair_leaderboard_image(rankings):
+    """return PNG byte array for rankings"""
+    SMOKE_WHITE = (250, 250, 250)
+    BLACK = (0, 0, 0)
+    DISCORD_GRAY = (.212, .244, .247)
+    ROW_COLORS = ((0.95, 0.95, 0.95), (0.9, 0.9, 0.9))
+
+    WIDTH = 900
+    BORDER_MARGIN = 20
+    COLUMN_MARGIN = 10
+    HEADER_SPACING = 1.25
+    WIDTH_RANK = 0.08*WIDTH
+    WIDTH_NAME = 0.38*WIDTH
+    LINE_HEIGHT = 40
+    HEIGHT = int((len(rankings) + HEADER_SPACING) * LINE_HEIGHT + 2*BORDER_MARGIN)
+    
+    # Cairo+Pango setup
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, WIDTH, HEIGHT)
+    context = cairo.Context(surface)
+    context.set_line_width(1)
+    context.set_source_rgb(*DISCORD_GRAY)
+    context.rectangle(0, 0, WIDTH, HEIGHT)
+    context.fill()
+    layout = PangoCairo.create_layout(context)
+    layout.set_font_description(Pango.font_description_from_string(','.join(FONTS) + ' 20'))
+    layout.set_ellipsize(Pango.EllipsizeMode.END)
+
+    def draw_bg(y, color_index):
+        nxty = y + LINE_HEIGHT
+        context.move_to(BORDER_MARGIN, y)
+        context.line_to(WIDTH, y)
+        context.line_to(WIDTH, nxty)
+        context.line_to(0, nxty)
+        context.set_source_rgb(*ROW_COLORS[color_index])
+        context.fill()
+
+    def draw_row(pos, username, handle, rating, color, y, bold=False):
+        context.set_source_rgb(*[x/255.0 for x in color])
+        context.move_to(BORDER_MARGIN, y)
+
+        def draw(text, width=-1):
+            text = html.escape(text)
+            if bold:
+                text = f'<b>{text}</b>'
+            layout.set_width((width - COLUMN_MARGIN)*1000) # pixel = 1000 pango units
+            layout.set_markup(text, -1)
+            PangoCairo.show_layout(context, layout)
+            context.rel_move_to(width, 0)
+
+        draw(pos, WIDTH_RANK)
+        draw(username, WIDTH_NAME)
+        draw(handle, WIDTH_NAME)
+        draw(rating)
+
+    y = BORDER_MARGIN
+
+    # draw header
+    draw_row('#', 'Name', 'Handle', 'Solved / Points', SMOKE_WHITE, y, bold=True)
+    y += LINE_HEIGHT*HEADER_SPACING
+
+    for i, (pos, name, handle, rating, score) in enumerate(rankings):
+        color = rating_to_color(rating)
+        draw_bg(y, i%2)
+        draw_row(str(pos+1), f'{name}', f'{handle} ({rating if rating else "N/A"})' , str(score), color, y)
+        if rating and rating >= 3000:  # nutella
+            draw_row('', name[0], handle[0], '', BLACK, y)
+        y += LINE_HEIGHT
+
+    image_data = io.BytesIO()
+    surface.write_to_png(image_data)
+    return image_data.getvalue()
 
 def _calculateFairScoreForDelta(delta):
     """Calculates fair points based on the delta of the solved problem."""
@@ -32,6 +146,7 @@ class Fair(commands.Cog):
                 continue
                 
             score = 0
+            solved_count = 0
             for entry in data:
                 # gitlog typically: issue, finish, name, contest, index, delta, status
                 finish = entry[1]
@@ -40,38 +155,45 @@ class Fair(commands.Cog):
                 # Count points for challenges completed in the exact timeframe.
                 if finish and start_time <= finish < end_time:
                     score += _calculateFairScoreForDelta(delta)
+                    solved_count += 1
                     
-            if score > 0:
-                user_scores.append((score, user_id, cf_user.handle, cf_user.rating))
+            if score > 0 or solved_count > 0:
+                user_scores.append((score, solved_count, user_id, cf_user.handle, cf_user.rating))
                 
         # Sort by highest score first
         user_scores.sort(key=lambda x: x[0], reverse=True)
         return user_scores
 
-    def _build_fair_embed(self, ctx, title, user_scores):
-        """Helper to build a clean embed for the fair leaderboards."""
+    async def _send_fair_leaderboard(self, ctx, title, user_scores):
+        """Helper to build and send the fair leaderboards image."""
         if not user_scores:
             embed = discord.Embed(
                 title=title,
                 description="No one has earned any fair points in this timeframe yet! Get to grinding! 💻",
                 color=discord.Color.light_grey()
             )
-            return embed
+            await ctx.send(embed=embed)
+            return
             
-        desc = ""
-        medals = ["🥇", "🥈", "🥉"]
-        for i, (score, user_id, handle, rating) in enumerate(user_scores[:10]):  # Top 10 limit for embed
+        rankings = []
+        for i, (score, solved_count, user_id, handle, rating) in enumerate(user_scores[:20]):
             member = ctx.guild.get_member(user_id)
-            mention = member.mention if member else f"`{handle}`"
-            rank = medals[i] if i < 3 else f"**#{i+1}**"
-            desc += f"{rank} {mention} — **{score}** Points\n"
+            discord_handle = member.display_name if member else ""
             
-        embed = discord.Embed(
-            title=title,
-            description=desc,
-            color=discord.Color.green()
-        )
-        return embed
+            # Format the score string as "Solved / Points"
+            if isinstance(score, float):
+                score_str = f"{solved_count} / {score:.2f}"
+            else:
+                score_str = f"{solved_count} / {score}"
+                
+            rankings.append((i, discord_handle, handle, rating, score_str))
+            
+        image_bytes = get_fair_leaderboard_image(rankings)
+        discord_file = discord.File(io.BytesIO(image_bytes), filename='fair_leaderboard.png')
+        
+        embed = discord.Embed(title=title, color=discord.Color.gold())
+        embed.set_image(url="attachment://fair_leaderboard.png")
+        await ctx.send(embed=embed, file=discord_file)
 
     @commands.hybrid_command(description="Update user ratings and cache to ensure they are fresh", aliases=["updateratings", "refreshfair"])
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
@@ -197,8 +319,7 @@ class Fair(commands.Cog):
         end_time_dt = start_time_dt + datetime.timedelta(days=1)
         
         user_scores = self._get_fair_leaderboard(ctx.guild.id, start_time_dt.timestamp(), end_time_dt.timestamp())
-        embed = self._build_fair_embed(ctx, f"🗓️ Daily Fair Leaderboard - {start_time_dt.strftime('%b %d')}", user_scores)
-        await ctx.send(embed=embed)
+        await self._send_fair_leaderboard(ctx, f"🗓️ Daily Fair Leaderboard - {start_time_dt.strftime('%b %d')}", user_scores)
 
     @commands.hybrid_command(description="View the Weekly Fair Leaderboard", aliases=["wfair", "wsp"])
     async def weeklyfair(self, ctx):
@@ -209,8 +330,7 @@ class Fair(commands.Cog):
         end_time_dt = start_time_dt + datetime.timedelta(days=7)
         
         user_scores = self._get_fair_leaderboard(ctx.guild.id, start_time_dt.timestamp(), end_time_dt.timestamp())
-        embed = self._build_fair_embed(ctx, f"🗓️ Weekly Fair Leaderboard (Week {start_time_dt.isocalendar()[1]})", user_scores)
-        await ctx.send(embed=embed)
+        await self._send_fair_leaderboard(ctx, f"🏆 Weekly Fair Leaderboard (Week {start_time_dt.isocalendar()[1]})", user_scores)
 
     @commands.hybrid_command(description="View the Monthly Fair Leaderboard", aliases=["mfair", "msp"])
     async def monthlyfair(self, ctx):
@@ -224,8 +344,7 @@ class Fair(commands.Cog):
             end_time_dt = start_time_dt.replace(month=start_time_dt.month + 1)
             
         user_scores = self._get_fair_leaderboard(ctx.guild.id, start_time_dt.timestamp(), end_time_dt.timestamp())
-        embed = self._build_fair_embed(ctx, f"🗓️ Monthly Fair Leaderboard - {start_time_dt.strftime('%B %Y')}", user_scores)
-        await ctx.send(embed=embed)
+        await self._send_fair_leaderboard(ctx, f"🏆 Monthly Fair Leaderboard - {start_time_dt.strftime('%B %Y')}", user_scores)
 
 async def setup(bot):
     await bot.add_cog(Fair(bot))
