@@ -150,7 +150,6 @@ class Fair(commands.Cog):
         self.db_conn.close()
 
     def calculate_points(self, user_rating: int, problem_rating: int) -> float:
-    def calculate_points(self, user_rating: int, problem_rating: int) -> float:
         """
         Calculates fair points based on the Elo expected probability curve.
         """
