@@ -325,7 +325,7 @@ class MonthlyGitgudders(commands.Cog):
 
     @commands.hybrid_command(hidden=True)
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
-    async def force_announce_mgg(self, ctx):
+    async def force_mgg_update(self, ctx):
         """Admin command to manually trigger the Top 3 announcement for the CURRENT month."""
         announced = await self._do_announcement(datetime.datetime.now())
 
