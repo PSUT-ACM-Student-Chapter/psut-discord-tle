@@ -1,340 +1,131 @@
+import random
+import datetime
 import discord
 from discord.ext import commands
-import time
-import logging
-import asyncio
-import io
-import html
-import cairo
-import gi
-import sqlite3
-import json
-from datetime import datetime, timedelta
 
-gi.require_version('Pango', '1.0')
-gi.require_version('PangoCairo', '1.0')
-from gi.repository import Pango, PangoCairo
-
-# Directly import codeforces_common and codeforces_api from tle.util
-from tle.util import codeforces_common as cf_common
+from tle import constants
 from tle.util import codeforces_api as cf
+from tle.util import codeforces_common as cf_common
 
-logger = logging.getLogger(__name__)
-
-FONTS = [
-    'Noto Sans',
-    'Noto Sans CJK JP',
-    'Noto Sans CJK SC',
-    'Noto Sans CJK TC',
-    'Noto Sans CJK HK',
-    'Noto Sans CJK KR',
-]
-
-def rating_to_color(rating):
-    """returns (r, g, b) pixels values corresponding to rating"""
-    BLACK = (10, 10, 10)
-    RED = (255, 20, 20)
-    BLUE = (0, 0, 200)
-    GREEN = (0, 140, 0)
-    ORANGE = (250, 140, 30)
-    PURPLE = (160, 0, 120)
-    CYAN = (0, 165, 170)
-    GREY = (70, 70, 70)
-    if rating is None or rating == 'N/A':
-        return BLACK
-    if rating < 1200:
-        return GREY
-    if rating < 1400:
-        return GREEN
-    if rating < 1600:
-        return CYAN
-    if rating < 1900:
-        return BLUE
-    if rating < 2100:
-        return PURPLE
-    if rating < 2400:
-        return ORANGE
-    return RED
-
-def get_fair_leaderboard_image(rankings):
-    """return PNG byte array for rankings"""
-    SMOKE_WHITE = (250, 250, 250)
-    BLACK = (0, 0, 0)
-    DISCORD_GRAY = (.212, .244, .247)
-    ROW_COLORS = ((0.95, 0.95, 0.95), (0.9, 0.9, 0.9))
-
-    WIDTH = 900
-    BORDER_MARGIN = 20
-    COLUMN_MARGIN = 10
-    HEADER_SPACING = 1.25
-    WIDTH_RANK = 0.08*WIDTH
-    WIDTH_NAME = 0.38*WIDTH
-    LINE_HEIGHT = 40
-    HEIGHT = int((len(rankings) + HEADER_SPACING) * LINE_HEIGHT + 2*BORDER_MARGIN)
-    
-    # Cairo+Pango setup
-    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, WIDTH, HEIGHT)
-    context = cairo.Context(surface)
-    context.set_line_width(1)
-    context.set_source_rgb(*DISCORD_GRAY)
-    context.rectangle(0, 0, WIDTH, HEIGHT)
-    context.fill()
-    layout = PangoCairo.create_layout(context)
-    layout.set_font_description(Pango.font_description_from_string(','.join(FONTS) + ' 20'))
-    layout.set_ellipsize(Pango.EllipsizeMode.END)
-
-    def draw_bg(y, color_index):
-        nxty = y + LINE_HEIGHT
-        context.move_to(BORDER_MARGIN, y)
-        context.line_to(WIDTH, y)
-        context.line_to(WIDTH, nxty)
-        context.line_to(0, nxty)
-        context.set_source_rgb(*ROW_COLORS[color_index])
-        context.fill()
-
-    def draw_row(pos, username, handle, rating, color, y, bold=False):
-        context.set_source_rgb(*[x/255.0 for x in color])
-        context.move_to(BORDER_MARGIN, y)
-
-        def draw(text, width=-1):
-            text = html.escape(text)
-            if bold:
-                text = f'<b>{text}</b>'
-            layout.set_width((width - COLUMN_MARGIN)*1000) # pixel = 1000 pango units
-            layout.set_markup(text, -1)
-            PangoCairo.show_layout(context, layout)
-            context.rel_move_to(width, 0)
-
-        draw(pos, WIDTH_RANK)
-        draw(username, WIDTH_NAME)
-        draw(handle, WIDTH_NAME)
-        draw(rating)
-
-    y = BORDER_MARGIN
-
-    # draw header
-    draw_row('#', 'Name', 'Handle', 'Solved / Points', SMOKE_WHITE, y, bold=True)
-    y += LINE_HEIGHT*HEADER_SPACING
-
-    for i, (pos, name, handle, rating, score) in enumerate(rankings):
-        color = rating_to_color(rating)
-        draw_bg(y, i%2)
-        draw_row(str(pos+1), f'{name}', f'{handle} ({rating if rating else "N/A"})' , str(score), color, y)
-        if rating and rating >= 3000:  # nutella
-            draw_row('', name[0], handle[0], '', BLACK, y)
-        y += LINE_HEIGHT
-
-    image_data = io.BytesIO()
-    surface.write_to_png(image_data)
-    return image_data.getvalue()
-
-
-class FairLeaderboard(commands.Cog):
+class Fair(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Cache duration in seconds (30 minutes)
-        self.CACHE_DURATION = 1800 
+
+    @commands.hybrid_command(description="Update user ratings and cache to ensure they are fresh", aliases=["updateratings", "refreshfair"])
+    @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
+    async def update_fair_cache(self, ctx):
+        """Fetches the latest ratings for all guild members and updates the cache/DB."""
+        await ctx.send("🔄 Fetching fresh ratings from Codeforces. This might take a moment...")
         
-        # Connect to a dedicated SQLite database just for caching fair leaderboards
-        self.db_conn = sqlite3.connect('fair_cache.db')
+        users = cf_common.user_db.get_cf_users_for_guild(ctx.guild.id)
+        if not users:
+            await ctx.send("❌ No users registered in this server.")
+            return
         
-        # Changed table to cache_v2 to invalidate old image formats automatically
-        self.db_conn.execute('''
-            CREATE TABLE IF NOT EXISTS cache_v2 (
-                guild_id INTEGER,
-                days INTEGER,
-                timestamp REAL,
-                embed_dict TEXT,
-                image_bytes BLOB,
-                PRIMARY KEY (guild_id, days)
-            )
-        ''')
-        self.db_conn.commit()
-
-    def cog_unload(self):
-        # Safely close the database connection when the bot/cog shuts down
-        self.db_conn.close()
-
-    def calculate_points(self, user_rating: int, problem_rating: int) -> float:
-        """
-        Calculates fair points based on the Elo expected probability curve.
-        """
-        # Default unrated users and unrated problems to 800 rating
-        u_rating = max(800, user_rating or 800)
-        p_rating = problem_rating or 800
+        # Extract unique handles
+        handles = list(set([user.handle for user_id, user in users]))
         
-        # Base points: 1 point per 100 rating
-        base_points = p_rating / 100.0
-        
-        # Exponential multiplier: Doubles for every 400 rating difference
-        multiplier = 2.0 ** ((p_rating - u_rating) / 400.0)
-        
-        return round(base_points * multiplier, 2)
-
-    async def _generate_leaderboard(self, ctx, days: int, title: str):
-        now = datetime.utcnow()
-        start_time = now - timedelta(days=days)
-        start_timestamp = start_time.timestamp()
-
-        # Check SQLite cache first to respond instantly if recently requested
-        cached_row = self.db_conn.execute(
-            'SELECT timestamp, embed_dict, image_bytes FROM cache_v2 WHERE guild_id = ? AND days = ?', 
-            (ctx.guild.id, days)
-        ).fetchone()
-
-        if cached_row:
-            cache_time, cached_embed_dict, cached_image_bytes = cached_row
-            if time.time() - cache_time < self.CACHE_DURATION:
-                embed = discord.Embed.from_dict(json.loads(cached_embed_dict))
-                discord_file = discord.File(io.BytesIO(cached_image_bytes), filename='fair_leaderboard.png') if cached_image_bytes else None
-                return embed, discord_file
-
-        # Sanity check: Ensure the database is actually loaded before proceeding
-        if getattr(cf_common, 'user_db', None) is None:
-            embed = discord.Embed(
-                title=title, 
-                description="⏳ The Codeforces database is still initializing. Please try again in a moment!", 
-                color=discord.Color.orange()
-            )
-            return embed, None
-
-        # ------------------------------------------------------------------
-        # INTEGRATION POINT: Fetching users and submissions.
-        # This uses concurrent API fetching for maximum speed.
-        # ------------------------------------------------------------------
         try:
-            # 1. Get all handles linked in this Discord server
-            handles = cf_common.user_db.get_handles_for_guild(ctx.guild.id)
-            if not handles:
-                embed = discord.Embed(title=title, description="No handles registered in this server.", color=discord.Color.red())
-                return embed, None
+            fresh_users = []
+            # Fetch fresh users in chunks to be safe with CF API limits
+            chunk_size = 300
+            for i in range(0, len(handles), chunk_size):
+                chunk = handles[i:i + chunk_size]
+                fresh_users.extend(await cf.user.info(handles=chunk))
             
-            # Extract just the string handles from the DB tuples
-            handle_strings = [handle for _, handle in handles]
-            
-            # 2. Fetch the Codeforces User objects directly from the API to get current ratings
-            cf_users = await cf.user.info(handles=handle_strings)
-            user_ratings = {u.handle: u.rating for u in cf_users}
-            
-            leaderboard = []
-            
-            # 3. Fetch all submissions CONCURRENTLY. This is massively faster than doing it one by one.
-            async def get_subs(handle):
-                try:
-                    # TLE's wrapper automatically handles Codeforces rate limits efficiently
-                    return handle, await cf.user.status(handle=handle)
-                except Exception as e:
-                    logger.warning(f"Failed to fetch subs for {handle}: {e}")
-                    return handle, []
+            # Update user_db with the fresh rating data
+            for user in fresh_users:
+                # Depending on the TLE fork, the method might be named slightly differently
+                if hasattr(cf_common.user_db, 'cache_cf_user'):
+                    cf_common.user_db.cache_cf_user(user)
+                elif hasattr(cf_common.user_db, 'save_cf_user'):
+                    cf_common.user_db.save_cf_user(user)
 
-            # Gather all requests at once
-            tasks = [get_subs(handle) for handle in handle_strings]
-            results = await asyncio.gather(*tasks)
-            subs_by_handle = dict(results)
-            
-            # 4. Iterate through each registered user and calculate scores
-            for user_id, handle in handles:
-                rating = user_ratings.get(handle, 800)
-                subs = subs_by_handle.get(handle, [])
-                
-                if not subs:
-                    continue
-                
-                solved_problems = set()
-                total_points = 0.0
-                
-                for sub in subs:
-                    # Filter by the time window and ensure the verdict is 'OK'
-                    if sub.creationTimeSeconds >= start_timestamp and sub.verdict == 'OK':
-                        # Create a unique problem identifier (e.g., '1352A')
-                        prob_id = f"{sub.problem.contestId}{sub.problem.index}"
-                        
-                        # Only count the problem if it hasn't been solved already this period
-                        if prob_id not in solved_problems:
-                            solved_problems.add(prob_id)
-                            
-                            # Add fair points
-                            pts = self.calculate_points(rating, sub.problem.rating)
-                            total_points += pts
-                            
-                # Only add users who actually solved something to the board
-                if solved_problems:
-                    leaderboard.append({
-                        'user_id': user_id,
-                        'handle': handle,
-                        'rating': rating,
-                        'solved_count': len(solved_problems),
-                        'points': total_points
-                    })
-                    
+            await ctx.send(f"✅ Successfully updated the cache and DB for **{len(fresh_users)}** users!")
         except Exception as e:
-            logger.exception("Error generating fair leaderboard")
-            embed = discord.Embed(
-                title="Error Generating Leaderboard", 
-                description=f"An error occurred accessing the API: `{e}`\nPlease check your server console for the traceback.", 
-                color=discord.Color.red()
-            )
-            return embed, None
+            await ctx.send(f"❌ Error updating cache: {e}")
 
-        # ------------------------------------------------------------------
-        # Formatting the Output
-        # ------------------------------------------------------------------
-        leaderboard.sort(key=lambda x: x['points'], reverse=True)
-        
-        if not leaderboard:
-            embed = discord.Embed(title=title, description="No one has solved any problems in this time period. Time to get to work!", color=discord.Color.gold())
-            # Save empty board to SQLite cache
-            self.db_conn.execute(
-                'INSERT OR REPLACE INTO cache_v2 (guild_id, days, timestamp, embed_dict, image_bytes) VALUES (?, ?, ?, ?, ?)',
-                (ctx.guild.id, days, time.time(), json.dumps(embed.to_dict()), None)
-            )
-            self.db_conn.commit()
-            return embed, None
+    @commands.hybrid_command(description="Recommend a fair duel between active DGG/WGG/MGG participants")
+    async def fair_duel(self, ctx):
+        """Recommends a fair duel between active Gitgud participants."""
+        guild_id = ctx.guild.id
+        res = cf_common.user_db.get_cf_users_for_guild(guild_id)
+        if not res:
+            await ctx.send("❌ No registered users found in this server.")
+            return
 
-        rankings = []
-        for i, entry in enumerate(leaderboard[:20]):
-            member = ctx.guild.get_member(entry['user_id'])
-            discord_handle = member.display_name if member else ""
-            # Format the score string as "Solved / Points"
-            score_str = f"{entry['solved_count']} / {entry['points']:.2f}"
-            rankings.append((i, discord_handle, entry['handle'], entry['rating'], score_str))
-            
-        image_bytes = get_fair_leaderboard_image(rankings)
-        discord_file = discord.File(io.BytesIO(image_bytes), filename='fair_leaderboard.png')
-            
-        embed = discord.Embed(title=title, color=discord.Color.gold())
-        embed.set_image(url="attachment://fair_leaderboard.png")
-        embed.set_footer(text=f"Points reward solving harder problems based on rating! (Updates every 30m)")
+        active_users = []
+        now = datetime.datetime.now().timestamp()
         
-        # Save beautifully rendered board to SQLite cache
-        self.db_conn.execute(
-            'INSERT OR REPLACE INTO cache_v2 (guild_id, days, timestamp, embed_dict, image_bytes) VALUES (?, ?, ?, ?, ?)',
-            (ctx.guild.id, days, time.time(), json.dumps(embed.to_dict()), image_bytes)
+        # MGG / WGG / DGG activity check: Anyone who completed a gitgud in the last 30 days
+        thirty_days_ago = now - (30 * 24 * 60 * 60)
+
+        for user_id, cf_user in res:
+            data = cf_common.user_db.gitlog(user_id)
+            if not data:
+                continue
+            
+            # Check for recent gitgud activity
+            has_recent = False
+            for entry in data:
+                # gitlog structure is typically: issue, finish, name, contest, index, delta, status
+                finish = entry[1]
+                if finish and finish >= thirty_days_ago:
+                    has_recent = True
+                    break
+            
+            if has_recent and cf_user.rating is not None:
+                active_users.append((user_id, cf_user))
+
+        if len(active_users) < 2:
+            await ctx.send("❌ Not enough active participants in the recent gitgud challenges to recommend a duel.")
+            return
+
+        # Sort active users by rating to easily find fair matches
+        active_users.sort(key=lambda x: x[1].rating)
+        
+        fair_pairs = []
+        best_pair = None
+        min_diff = float('inf')
+
+        # We consider a duel "fair" if the rating difference is <= 100
+        for i in range(len(active_users)):
+            for j in range(i + 1, len(active_users)):
+                diff = abs(active_users[i][1].rating - active_users[j][1].rating)
+                if diff <= 100:
+                    fair_pairs.append((active_users[i], active_users[j], diff))
+                
+                # Keep track of the absolute closest pair as a fallback
+                if diff < min_diff:
+                    min_diff = diff
+                    best_pair = (active_users[i], active_users[j], diff)
+
+        if fair_pairs:
+            # Pick a random fair pair to keep recommendations varied over time
+            chosen_pair = random.choice(fair_pairs)
+        else:
+            # Fallback to the absolute closest pair if no one is within 100 points
+            chosen_pair = best_pair
+
+        user1, user2, diff = chosen_pair
+        
+        member1 = ctx.guild.get_member(user1[0])
+        member2 = ctx.guild.get_member(user2[0])
+        
+        mention1 = member1.mention if member1 else f"`{user1[1].handle}`"
+        mention2 = member2.mention if member2 else f"`{user2[1].handle}`"
+
+        embed = discord.Embed(
+            title="⚔️ Fair Duel Recommendation ⚔️",
+            description=f"Based on recent active participation in the Gitgudders (DGG/WGG/MGG), we recommend a duel between:\n\n"
+                        f"🔴 {mention1} (Rating: **{user1[1].rating}**)\n"
+                        f"🔵 {mention2} (Rating: **{user2[1].rating}**)\n\n"
+                        f"**Rating Difference:** {diff} points",
+            color=discord.Color.dark_teal()
         )
-        self.db_conn.commit()
+        embed.set_footer(text=f"Pro-tip: Type ';duel challenge {user2[1].handle}' to start the duel!")
         
-        return embed, discord_file
+        await ctx.send(embed=embed)
 
-    @commands.command(name='weekly_solve', aliases=['fwgg', 'wsp'])
-    async def weekly_solve(self, ctx):
-        """Shows the number of questions solved this week with a fair point system."""
-        async with ctx.typing():
-            embed, discord_file = await self._generate_leaderboard(ctx, days=7, title="🏆 Weekly Fair Leaderboard")
-            if discord_file:
-                await ctx.send(embed=embed, file=discord_file)
-            else:
-                await ctx.send(embed=embed)
-
-    @commands.command(name='monthly_solve', aliases=['fmgg', 'msp'])
-    async def monthly_solve(self, ctx):
-        """Shows the number of questions solved this month with a fair point system."""
-        async with ctx.typing():
-            embed, discord_file = await self._generate_leaderboard(ctx, days=30, title="🏆 Monthly Fair Leaderboard")
-            if discord_file:
-                await ctx.send(embed=embed, file=discord_file)
-            else:
-                await ctx.send(embed=embed)
-
-# This setup function is required for discord.ext.commands to load the Cog
 async def setup(bot):
-    await bot.add_cog(FairLeaderboard(bot))
+    await bot.add_cog(Fair(bot))
