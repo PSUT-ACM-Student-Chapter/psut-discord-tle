@@ -8,6 +8,9 @@ import io
 import html
 import cairo
 import gi
+import sqlite3
+import json
+import time
 gi.require_version('Pango', '1.0')
 gi.require_version('PangoCairo', '1.0')
 from gi.repository import Pango, PangoCairo
@@ -128,7 +131,25 @@ def get_fair_leaderboard_image(rankings):
 class Fair(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.CACHE_DURATION = 1800  # 30 minutes
+        
+        self.db_conn = sqlite3.connect('fair_cache.db')
+        self.db_conn.execute('''
+            CREATE TABLE IF NOT EXISTS cache_v2 (
+                guild_id INTEGER,
+                timeframe TEXT,
+                timestamp REAL,
+                embed_dict TEXT,
+                image_bytes BLOB,
+                PRIMARY KEY (guild_id, timeframe)
+            )
+        ''')
+        self.db_conn.commit()
 
+    def cog_unload(self):
+        self.db_conn.close()
+
+    def calculate_points(self, user_rating: int, problem_rating: int) -> float:
     def calculate_points(self, user_rating: int, problem_rating: int) -> float:
         """
         Calculates fair points based on the Elo expected probability curve.
@@ -141,8 +162,21 @@ class Fair(commands.Cog):
         
         return round(base_points * multiplier, 2)
 
-    async def _generate_leaderboard(self, ctx, start_timestamp: float, title: str):
+    async def _generate_leaderboard(self, ctx, start_timestamp: float, title: str, timeframe: str):
         """Fetches live data from API, saves to cache, and generates the leaderboard image."""
+        # 0. Check Cache
+        cached_row = self.db_conn.execute(
+            'SELECT timestamp, embed_dict, image_bytes FROM cache_v2 WHERE guild_id = ? AND timeframe = ?', 
+            (ctx.guild.id, timeframe)
+        ).fetchone()
+
+        if cached_row:
+            cache_time, cached_embed_dict, cached_image_bytes = cached_row
+            if time.time() - cache_time < self.CACHE_DURATION:
+                embed = discord.Embed.from_dict(json.loads(cached_embed_dict))
+                discord_file = discord.File(io.BytesIO(cached_image_bytes), filename='fair_leaderboard.png') if cached_image_bytes else None
+                return embed, discord_file
+
         users = cf_common.user_db.get_cf_users_for_guild(ctx.guild.id)
         if not users:
             embed = discord.Embed(title=title, description="No handles registered in this server.", color=discord.Color.red())
@@ -230,6 +264,11 @@ class Fair(commands.Cog):
         
         if not leaderboard:
             embed = discord.Embed(title=title, description="No one has solved any problems in this time period. Time to get to work!", color=discord.Color.gold())
+            self.db_conn.execute(
+                'INSERT OR REPLACE INTO cache_v2 (guild_id, timeframe, timestamp, embed_dict, image_bytes) VALUES (?, ?, ?, ?, ?)',
+                (ctx.guild.id, timeframe, time.time(), json.dumps(embed.to_dict()), None)
+            )
+            self.db_conn.commit()
             return embed, None
             
         rankings = []
@@ -244,12 +283,18 @@ class Fair(commands.Cog):
             
         embed = discord.Embed(title=title, color=discord.Color.gold())
         embed.set_image(url="attachment://fair_leaderboard.png")
-        embed.set_footer(text=f"Points reward solving harder problems based on rating!")
+        embed.set_footer(text=f"Points reward solving harder problems based on rating! (Updates every 30m)")
+        
+        self.db_conn.execute(
+            'INSERT OR REPLACE INTO cache_v2 (guild_id, timeframe, timestamp, embed_dict, image_bytes) VALUES (?, ?, ?, ?, ?)',
+            (ctx.guild.id, timeframe, time.time(), json.dumps(embed.to_dict()), image_bytes)
+        )
+        self.db_conn.commit()
         
         return embed, discord_file
 
     @commands.hybrid_command(description="Update user ratings and cache to ensure they are fresh", aliases=["updateratings", "refreshfair"])
-#    @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
+    @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def update_fair_cache(self, ctx):
         """Fetches the latest ratings for all guild members and updates the cache/DB."""
         await ctx.send("🔄 Fetching fresh ratings from Codeforces. This might take a moment...")
@@ -364,7 +409,7 @@ class Fair(commands.Cog):
             now = datetime.datetime.now()
             start_time_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
             
-            embed, discord_file = await self._generate_leaderboard(ctx, start_time_dt.timestamp(), f"🗓️ Daily Fair Leaderboard - {start_time_dt.strftime('%b %d')}")
+            embed, discord_file = await self._generate_leaderboard(ctx, start_time_dt.timestamp(), f"🗓️ Daily Fair Leaderboard - {start_time_dt.strftime('%b %d')}", 'daily')
             
             if discord_file:
                 await ctx.send(embed=embed, file=discord_file)
@@ -379,7 +424,7 @@ class Fair(commands.Cog):
             start_of_week = now - datetime.timedelta(days=now.weekday())
             start_time_dt = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
             
-            embed, discord_file = await self._generate_leaderboard(ctx, start_time_dt.timestamp(), f"🏆 Weekly Fair Leaderboard (Week {start_time_dt.isocalendar()[1]})")
+            embed, discord_file = await self._generate_leaderboard(ctx, start_time_dt.timestamp(), f"🏆 Weekly Fair Leaderboard (Week {start_time_dt.isocalendar()[1]})", 'weekly')
             
             if discord_file:
                 await ctx.send(embed=embed, file=discord_file)
@@ -393,7 +438,7 @@ class Fair(commands.Cog):
             now = datetime.datetime.now()
             start_time_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             
-            embed, discord_file = await self._generate_leaderboard(ctx, start_time_dt.timestamp(), f"🏆 Monthly Fair Leaderboard - {start_time_dt.strftime('%B %Y')}")
+            embed, discord_file = await self._generate_leaderboard(ctx, start_time_dt.timestamp(), f"🏆 Monthly Fair Leaderboard - {start_time_dt.strftime('%B %Y')}", 'monthly')
             
             if discord_file:
                 await ctx.send(embed=embed, file=discord_file)
