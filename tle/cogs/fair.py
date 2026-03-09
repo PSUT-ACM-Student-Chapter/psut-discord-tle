@@ -7,9 +7,71 @@ from tle import constants
 from tle.util import codeforces_api as cf
 from tle.util import codeforces_common as cf_common
 
+def _calculateFairScoreForDelta(delta):
+    """Calculates fair points based on the delta of the solved problem."""
+    distrib = (1, 2, 3, 5, 8, 12, 17, 23)
+    if delta is None: return 0
+    if delta <= -400: return distrib[0]
+    if delta >= 300: return distrib[-1]
+    return distrib[(delta - -400) // 100]
+
 class Fair(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    def _get_fair_leaderboard(self, guild_id, start_time, end_time):
+        """Helper to calculate scores for a fair leaderboard based on active gitguds."""
+        res = cf_common.user_db.get_cf_users_for_guild(guild_id)
+        if not res:
+            return []
+            
+        user_scores = []
+        for user_id, cf_user in res:
+            data = cf_common.user_db.gitlog(user_id)
+            if not data:
+                continue
+                
+            score = 0
+            for entry in data:
+                # gitlog typically: issue, finish, name, contest, index, delta, status
+                finish = entry[1]
+                delta = entry[5]
+                
+                # Count points for challenges completed in the exact timeframe.
+                if finish and start_time <= finish < end_time:
+                    score += _calculateFairScoreForDelta(delta)
+                    
+            if score > 0:
+                user_scores.append((score, user_id, cf_user.handle, cf_user.rating))
+                
+        # Sort by highest score first
+        user_scores.sort(key=lambda x: x[0], reverse=True)
+        return user_scores
+
+    def _build_fair_embed(self, ctx, title, user_scores):
+        """Helper to build a clean embed for the fair leaderboards."""
+        if not user_scores:
+            embed = discord.Embed(
+                title=title,
+                description="No one has earned any fair points in this timeframe yet! Get to grinding! 💻",
+                color=discord.Color.light_grey()
+            )
+            return embed
+            
+        desc = ""
+        medals = ["🥇", "🥈", "🥉"]
+        for i, (score, user_id, handle, rating) in enumerate(user_scores[:10]):  # Top 10 limit for embed
+            member = ctx.guild.get_member(user_id)
+            mention = member.mention if member else f"`{handle}`"
+            rank = medals[i] if i < 3 else f"**#{i+1}**"
+            desc += f"{rank} {mention} — **{score}** Points\n"
+            
+        embed = discord.Embed(
+            title=title,
+            description=desc,
+            color=discord.Color.green()
+        )
+        return embed
 
     @commands.hybrid_command(description="Update user ratings and cache to ensure they are fresh", aliases=["updateratings", "refreshfair"])
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
@@ -125,6 +187,44 @@ class Fair(commands.Cog):
         )
         embed.set_footer(text=f"Pro-tip: Type ';duel challenge {user2[1].handle}' to start the duel!")
         
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command(description="View the Daily Fair Leaderboard", aliases=["dfair", "dsp"])
+    async def dailyfair(self, ctx):
+        """Displays the Daily Fair leaderboard (top points earned today)."""
+        now = datetime.datetime.now()
+        start_time_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_time_dt = start_time_dt + datetime.timedelta(days=1)
+        
+        user_scores = self._get_fair_leaderboard(ctx.guild.id, start_time_dt.timestamp(), end_time_dt.timestamp())
+        embed = self._build_fair_embed(ctx, f"🗓️ Daily Fair Leaderboard - {start_time_dt.strftime('%b %d')}", user_scores)
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command(description="View the Weekly Fair Leaderboard", aliases=["wfair", "wsp"])
+    async def weeklyfair(self, ctx):
+        """Displays the Weekly Fair leaderboard (top points earned this week)."""
+        now = datetime.datetime.now()
+        start_of_week = now - datetime.timedelta(days=now.weekday())
+        start_time_dt = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_time_dt = start_time_dt + datetime.timedelta(days=7)
+        
+        user_scores = self._get_fair_leaderboard(ctx.guild.id, start_time_dt.timestamp(), end_time_dt.timestamp())
+        embed = self._build_fair_embed(ctx, f"🗓️ Weekly Fair Leaderboard (Week {start_time_dt.isocalendar()[1]})", user_scores)
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command(description="View the Monthly Fair Leaderboard", aliases=["mfair", "msp"])
+    async def monthlyfair(self, ctx):
+        """Displays the Monthly Fair leaderboard (top points earned this month)."""
+        now = datetime.datetime.now()
+        start_time_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        # Find start of next month
+        if start_time_dt.month == 12:
+            end_time_dt = start_time_dt.replace(year=start_time_dt.year + 1, month=1)
+        else:
+            end_time_dt = start_time_dt.replace(month=start_time_dt.month + 1)
+            
+        user_scores = self._get_fair_leaderboard(ctx.guild.id, start_time_dt.timestamp(), end_time_dt.timestamp())
+        embed = self._build_fair_embed(ctx, f"🗓️ Monthly Fair Leaderboard - {start_time_dt.strftime('%B %Y')}", user_scores)
         await ctx.send(embed=embed)
 
 async def setup(bot):
