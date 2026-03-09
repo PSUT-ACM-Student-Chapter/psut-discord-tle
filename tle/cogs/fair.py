@@ -134,8 +134,9 @@ class Fair(commands.Cog):
         self.CACHE_DURATION = 1800  # 30 minutes
         
         self.db_conn = sqlite3.connect('fair_cache.db')
+        # Bumped to cache_v3 to avoid OperationalError with existing days vs timeframe column schema
         self.db_conn.execute('''
-            CREATE TABLE IF NOT EXISTS cache_v2 (
+            CREATE TABLE IF NOT EXISTS cache_v3 (
                 guild_id INTEGER,
                 timeframe TEXT,
                 timestamp REAL,
@@ -165,7 +166,7 @@ class Fair(commands.Cog):
         """Fetches live data from API, saves to cache, and generates the leaderboard image."""
         # 0. Check Cache
         cached_row = self.db_conn.execute(
-            'SELECT timestamp, embed_dict, image_bytes FROM cache_v2 WHERE guild_id = ? AND timeframe = ?', 
+            'SELECT timestamp, embed_dict, image_bytes FROM cache_v3 WHERE guild_id = ? AND timeframe = ?', 
             (ctx.guild.id, timeframe)
         ).fetchone()
 
@@ -264,7 +265,7 @@ class Fair(commands.Cog):
         if not leaderboard:
             embed = discord.Embed(title=title, description="No one has solved any problems in this time period. Time to get to work!", color=discord.Color.gold())
             self.db_conn.execute(
-                'INSERT OR REPLACE INTO cache_v2 (guild_id, timeframe, timestamp, embed_dict, image_bytes) VALUES (?, ?, ?, ?, ?)',
+                'INSERT OR REPLACE INTO cache_v3 (guild_id, timeframe, timestamp, embed_dict, image_bytes) VALUES (?, ?, ?, ?, ?)',
                 (ctx.guild.id, timeframe, time.time(), json.dumps(embed.to_dict()), None)
             )
             self.db_conn.commit()
@@ -285,7 +286,7 @@ class Fair(commands.Cog):
         embed.set_footer(text=f"Points reward solving harder problems based on rating! (Updates every 30m)")
         
         self.db_conn.execute(
-            'INSERT OR REPLACE INTO cache_v2 (guild_id, timeframe, timestamp, embed_dict, image_bytes) VALUES (?, ?, ?, ?, ?)',
+            'INSERT OR REPLACE INTO cache_v3 (guild_id, timeframe, timestamp, embed_dict, image_bytes) VALUES (?, ?, ?, ?, ?)',
             (ctx.guild.id, timeframe, time.time(), json.dumps(embed.to_dict()), image_bytes)
         )
         self.db_conn.commit()
