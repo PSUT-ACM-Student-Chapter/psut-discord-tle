@@ -1,5 +1,7 @@
 import random
 import datetime
+import asyncio
+import logging
 import discord
 from discord.ext import commands
 import io
@@ -13,6 +15,8 @@ from gi.repository import Pango, PangoCairo
 from tle import constants
 from tle.util import codeforces_api as cf
 from tle.util import codeforces_common as cf_common
+
+logger = logging.getLogger(__name__)
 
 FONTS = [
     'Noto Sans',
@@ -121,79 +125,124 @@ def get_fair_leaderboard_image(rankings):
     surface.write_to_png(image_data)
     return image_data.getvalue()
 
-def _calculateFairScoreForDelta(delta):
-    """Calculates fair points based on the delta of the solved problem."""
-    distrib = (1, 2, 3, 5, 8, 12, 17, 23)
-    if delta is None: return 0
-    if delta <= -400: return distrib[0]
-    if delta >= 300: return distrib[-1]
-    return distrib[(delta - -400) // 100]
-
 class Fair(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    def _get_fair_leaderboard(self, guild_id, start_time, end_time):
-        """Helper to calculate scores for a fair leaderboard based on active gitguds."""
-        res = cf_common.user_db.get_cf_users_for_guild(guild_id)
-        if not res:
-            return []
-            
-        user_scores = []
-        for user_id, cf_user in res:
-            data = cf_common.user_db.gitlog(user_id)
-            if not data:
-                continue
-                
-            score = 0
-            solved_count = 0
-            for entry in data:
-                # gitlog typically: issue, finish, name, contest, index, delta, status
-                finish = entry[1]
-                delta = entry[5]
-                
-                # Count points for challenges completed in the exact timeframe.
-                if finish and start_time <= finish < end_time:
-                    score += _calculateFairScoreForDelta(delta)
-                    solved_count += 1
-                    
-            if score > 0 or solved_count > 0:
-                user_scores.append((score, solved_count, user_id, cf_user.handle, cf_user.rating))
-                
-        # Sort by highest score first
-        user_scores.sort(key=lambda x: x[0], reverse=True)
-        return user_scores
+    def calculate_points(self, user_rating: int, problem_rating: int) -> float:
+        """
+        Calculates fair points based on the Elo expected probability curve.
+        """
+        u_rating = max(800, user_rating or 800)
+        p_rating = problem_rating or 800
+        
+        base_points = p_rating / 100.0
+        multiplier = 2.0 ** ((p_rating - u_rating) / 400.0)
+        
+        return round(base_points * multiplier, 2)
 
-    async def _send_fair_leaderboard(self, ctx, title, user_scores):
-        """Helper to build and send the fair leaderboards image."""
-        if not user_scores:
+    async def _generate_leaderboard(self, ctx, start_timestamp: float, title: str):
+        """Fetches live data from API, saves to cache, and generates the leaderboard image."""
+        users = cf_common.user_db.get_cf_users_for_guild(ctx.guild.id)
+        if not users:
+            embed = discord.Embed(title=title, description="No handles registered in this server.", color=discord.Color.red())
+            return embed, None
+
+        # 1. Gather handle mapping
+        handles = [user.handle for _, user in users]
+        handle_to_user_id = {user.handle: user_id for user_id, user in users}
+        
+        try:
+            # 2. Fetch fresh user objects & ratings directly from CF API
+            fresh_users = []
+            chunk_size = 300
+            for i in range(0, len(handles), chunk_size):
+                chunk = handles[i:i + chunk_size]
+                fresh_users.extend(await cf.user.info(handles=chunk))
+            
+            # 3. Update the local user_db cache with the freshly fetched data
+            for user in fresh_users:
+                if hasattr(cf_common.user_db, 'cache_cf_user'):
+                    cf_common.user_db.cache_cf_user(user)
+                elif hasattr(cf_common.user_db, 'save_cf_user'):
+                    cf_common.user_db.save_cf_user(user)
+                    
+            user_ratings = {u.handle: u.rating for u in fresh_users}
+            
+            # 4. Fetch submissions concurrently
+            async def get_subs(handle):
+                try:
+                    return handle, await cf.user.status(handle=handle)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch subs for {handle}: {e}")
+                    return handle, []
+
+            tasks = [get_subs(handle) for handle in handles]
+            results = await asyncio.gather(*tasks)
+            subs_by_handle = dict(results)
+            
+            # 5. Calculate Points
+            leaderboard = []
+            for handle, subs in subs_by_handle.items():
+                if not subs: continue
+                
+                rating = user_ratings.get(handle, 800)
+                solved_problems = set()
+                total_points = 0.0
+                
+                for sub in subs:
+                    # Filter by the time window and ensure the verdict is 'OK'
+                    if sub.creationTimeSeconds >= start_timestamp and sub.verdict == 'OK':
+                        prob_id = f"{sub.problem.contestId}{sub.problem.index}"
+                        
+                        # Only count the problem if it hasn't been solved already this period
+                        if prob_id not in solved_problems:
+                            solved_problems.add(prob_id)
+                            pts = self.calculate_points(rating, sub.problem.rating)
+                            total_points += pts
+                            
+                # Only add users who actually solved something to the board
+                if solved_problems:
+                    user_id = handle_to_user_id[handle]
+                    leaderboard.append({
+                        'user_id': user_id,
+                        'handle': handle,
+                        'rating': rating,
+                        'solved_count': len(solved_problems),
+                        'points': total_points
+                    })
+                    
+        except Exception as e:
+            logger.exception("Error generating fair leaderboard")
             embed = discord.Embed(
-                title=title,
-                description="No one has earned any fair points in this timeframe yet! Get to grinding! 💻",
-                color=discord.Color.light_grey()
+                title="Error Generating Leaderboard", 
+                description=f"An error occurred accessing the API: `{e}`\nPlease check your server console for the traceback.", 
+                color=discord.Color.red()
             )
-            await ctx.send(embed=embed)
-            return
+            return embed, None
+
+        # 6. Sort and Render
+        leaderboard.sort(key=lambda x: x['points'], reverse=True)
+        
+        if not leaderboard:
+            embed = discord.Embed(title=title, description="No one has solved any problems in this time period. Time to get to work!", color=discord.Color.gold())
+            return embed, None
             
         rankings = []
-        for i, (score, solved_count, user_id, handle, rating) in enumerate(user_scores[:20]):
-            member = ctx.guild.get_member(user_id)
+        for i, entry in enumerate(leaderboard[:20]):
+            member = ctx.guild.get_member(entry['user_id'])
             discord_handle = member.display_name if member else ""
-            
-            # Format the score string as "Solved / Points"
-            if isinstance(score, float):
-                score_str = f"{solved_count} / {score:.2f}"
-            else:
-                score_str = f"{solved_count} / {score}"
-                
-            rankings.append((i, discord_handle, handle, rating, score_str))
+            score_str = f"{entry['solved_count']} / {entry['points']:.2f}"
+            rankings.append((i, discord_handle, entry['handle'], entry['rating'], score_str))
             
         image_bytes = get_fair_leaderboard_image(rankings)
         discord_file = discord.File(io.BytesIO(image_bytes), filename='fair_leaderboard.png')
-        
+            
         embed = discord.Embed(title=title, color=discord.Color.gold())
         embed.set_image(url="attachment://fair_leaderboard.png")
-        await ctx.send(embed=embed, file=discord_file)
+        embed.set_footer(text=f"Points reward solving harder problems based on rating!")
+        
+        return embed, discord_file
 
     @commands.hybrid_command(description="Update user ratings and cache to ensure they are fresh", aliases=["updateratings", "refreshfair"])
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
@@ -206,20 +255,16 @@ class Fair(commands.Cog):
             await ctx.send("❌ No users registered in this server.")
             return
         
-        # Extract unique handles
         handles = list(set([user.handle for user_id, user in users]))
         
         try:
             fresh_users = []
-            # Fetch fresh users in chunks to be safe with CF API limits
             chunk_size = 300
             for i in range(0, len(handles), chunk_size):
                 chunk = handles[i:i + chunk_size]
                 fresh_users.extend(await cf.user.info(handles=chunk))
             
-            # Update user_db with the fresh rating data
             for user in fresh_users:
-                # Depending on the TLE fork, the method might be named slightly differently
                 if hasattr(cf_common.user_db, 'cache_cf_user'):
                     cf_common.user_db.cache_cf_user(user)
                 elif hasattr(cf_common.user_db, 'save_cf_user'):
@@ -241,7 +286,7 @@ class Fair(commands.Cog):
         active_users = []
         now = datetime.datetime.now().timestamp()
         
-        # MGG / WGG / DGG activity check: Anyone who completed a gitgud in the last 30 days
+        # MGG / WGG / DGG activity check (checking local gitlog)
         thirty_days_ago = now - (30 * 24 * 60 * 60)
 
         for user_id, cf_user in res:
@@ -249,10 +294,8 @@ class Fair(commands.Cog):
             if not data:
                 continue
             
-            # Check for recent gitgud activity
             has_recent = False
             for entry in data:
-                # gitlog structure is typically: issue, finish, name, contest, index, delta, status
                 finish = entry[1]
                 if finish and finish >= thirty_days_ago:
                     has_recent = True
@@ -265,30 +308,25 @@ class Fair(commands.Cog):
             await ctx.send("❌ Not enough active participants in the recent gitgud challenges to recommend a duel.")
             return
 
-        # Sort active users by rating to easily find fair matches
         active_users.sort(key=lambda x: x[1].rating)
         
         fair_pairs = []
         best_pair = None
         min_diff = float('inf')
 
-        # We consider a duel "fair" if the rating difference is <= 100
         for i in range(len(active_users)):
             for j in range(i + 1, len(active_users)):
                 diff = abs(active_users[i][1].rating - active_users[j][1].rating)
                 if diff <= 100:
                     fair_pairs.append((active_users[i], active_users[j], diff))
                 
-                # Keep track of the absolute closest pair as a fallback
                 if diff < min_diff:
                     min_diff = diff
                     best_pair = (active_users[i], active_users[j], diff)
 
         if fair_pairs:
-            # Pick a random fair pair to keep recommendations varied over time
             chosen_pair = random.choice(fair_pairs)
         else:
-            # Fallback to the absolute closest pair if no one is within 100 points
             chosen_pair = best_pair
 
         user1, user2, diff = chosen_pair
@@ -314,37 +352,45 @@ class Fair(commands.Cog):
     @commands.hybrid_command(description="View the Daily Fair Leaderboard", aliases=["dfair", "dsp"])
     async def dailyfair(self, ctx):
         """Displays the Daily Fair leaderboard (top points earned today)."""
-        now = datetime.datetime.now()
-        start_time_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_time_dt = start_time_dt + datetime.timedelta(days=1)
-        
-        user_scores = self._get_fair_leaderboard(ctx.guild.id, start_time_dt.timestamp(), end_time_dt.timestamp())
-        await self._send_fair_leaderboard(ctx, f"🗓️ Daily Fair Leaderboard - {start_time_dt.strftime('%b %d')}", user_scores)
+        async with ctx.typing():
+            now = datetime.datetime.now()
+            start_time_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            
+            embed, discord_file = await self._generate_leaderboard(ctx, start_time_dt.timestamp(), f"🗓️ Daily Fair Leaderboard - {start_time_dt.strftime('%b %d')}")
+            
+            if discord_file:
+                await ctx.send(embed=embed, file=discord_file)
+            else:
+                await ctx.send(embed=embed)
 
     @commands.hybrid_command(description="View the Weekly Fair Leaderboard", aliases=["wfair", "wsp"])
     async def weeklyfair(self, ctx):
         """Displays the Weekly Fair leaderboard (top points earned this week)."""
-        now = datetime.datetime.now()
-        start_of_week = now - datetime.timedelta(days=now.weekday())
-        start_time_dt = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_time_dt = start_time_dt + datetime.timedelta(days=7)
-        
-        user_scores = self._get_fair_leaderboard(ctx.guild.id, start_time_dt.timestamp(), end_time_dt.timestamp())
-        await self._send_fair_leaderboard(ctx, f"🏆 Weekly Fair Leaderboard (Week {start_time_dt.isocalendar()[1]})", user_scores)
+        async with ctx.typing():
+            now = datetime.datetime.now()
+            start_of_week = now - datetime.timedelta(days=now.weekday())
+            start_time_dt = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+            
+            embed, discord_file = await self._generate_leaderboard(ctx, start_time_dt.timestamp(), f"🏆 Weekly Fair Leaderboard (Week {start_time_dt.isocalendar()[1]})")
+            
+            if discord_file:
+                await ctx.send(embed=embed, file=discord_file)
+            else:
+                await ctx.send(embed=embed)
 
     @commands.hybrid_command(description="View the Monthly Fair Leaderboard", aliases=["mfair", "msp"])
     async def monthlyfair(self, ctx):
         """Displays the Monthly Fair leaderboard (top points earned this month)."""
-        now = datetime.datetime.now()
-        start_time_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        # Find start of next month
-        if start_time_dt.month == 12:
-            end_time_dt = start_time_dt.replace(year=start_time_dt.year + 1, month=1)
-        else:
-            end_time_dt = start_time_dt.replace(month=start_time_dt.month + 1)
+        async with ctx.typing():
+            now = datetime.datetime.now()
+            start_time_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             
-        user_scores = self._get_fair_leaderboard(ctx.guild.id, start_time_dt.timestamp(), end_time_dt.timestamp())
-        await self._send_fair_leaderboard(ctx, f"🏆 Monthly Fair Leaderboard - {start_time_dt.strftime('%B %Y')}", user_scores)
+            embed, discord_file = await self._generate_leaderboard(ctx, start_time_dt.timestamp(), f"🏆 Monthly Fair Leaderboard - {start_time_dt.strftime('%B %Y')}")
+            
+            if discord_file:
+                await ctx.send(embed=embed, file=discord_file)
+            else:
+                await ctx.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(Fair(bot))
