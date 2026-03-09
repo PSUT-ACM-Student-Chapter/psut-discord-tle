@@ -160,12 +160,16 @@ class Fair(commands.Cog):
                 chunk = handles[i:i + chunk_size]
                 fresh_users.extend(await cf.user.info(handles=chunk))
             
-            # 3. Update the local user_db cache with the freshly fetched data
-            for user in fresh_users:
-                if hasattr(cf_common.user_db, 'cache_cf_user'):
-                    cf_common.user_db.cache_cf_user(user)
-                elif hasattr(cf_common.user_db, 'save_cf_user'):
-                    cf_common.user_db.save_cf_user(user)
+            # 3. Update the local user_db cache with the freshly fetched data 
+            # This ensures that it is reflected in mgg, wgg, and dgg databases too
+            if hasattr(cf_common.user_db, 'cache_cf_users'):
+                cf_common.user_db.cache_cf_users(fresh_users)
+            else:
+                for user in fresh_users:
+                    if hasattr(cf_common.user_db, 'cache_cf_user'):
+                        cf_common.user_db.cache_cf_user(user)
+                    elif hasattr(cf_common.user_db, 'save_cf_user'):
+                        cf_common.user_db.save_cf_user(user)
                     
             user_ratings = {u.handle: u.rating for u in fresh_users}
             
@@ -264,11 +268,15 @@ class Fair(commands.Cog):
                 chunk = handles[i:i + chunk_size]
                 fresh_users.extend(await cf.user.info(handles=chunk))
             
-            for user in fresh_users:
-                if hasattr(cf_common.user_db, 'cache_cf_user'):
-                    cf_common.user_db.cache_cf_user(user)
-                elif hasattr(cf_common.user_db, 'save_cf_user'):
-                    cf_common.user_db.save_cf_user(user)
+            # Properly update the database tables used by mgg/wgg/dgg
+            if hasattr(cf_common.user_db, 'cache_cf_users'):
+                cf_common.user_db.cache_cf_users(fresh_users)
+            else:
+                for user in fresh_users:
+                    if hasattr(cf_common.user_db, 'cache_cf_user'):
+                        cf_common.user_db.cache_cf_user(user)
+                    elif hasattr(cf_common.user_db, 'save_cf_user'):
+                        cf_common.user_db.save_cf_user(user)
 
             await ctx.send(f"✅ Successfully updated the cache and DB for **{len(fresh_users)}** users!")
         except Exception as e:
