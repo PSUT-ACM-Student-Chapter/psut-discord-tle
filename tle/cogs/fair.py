@@ -245,7 +245,7 @@ class Fair(commands.Cog):
         return embed, discord_file
 
     @commands.hybrid_command(description="Update user ratings and cache to ensure they are fresh", aliases=["updateratings", "refreshfair"])
-    @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
+#    @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def update_fair_cache(self, ctx):
         """Fetches the latest ratings for all guild members and updates the cache/DB."""
         await ctx.send("🔄 Fetching fresh ratings from Codeforces. This might take a moment...")
