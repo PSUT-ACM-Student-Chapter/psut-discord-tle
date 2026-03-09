@@ -335,4 +335,8 @@ class MonthlyGitgudders(commands.Cog):
             await ctx.send("Could not find the configured channels to announce in. (Check CHANNEL_IDS env variable)")
 
 async def setup(bot):
+    # Unregister the default built-in commands/aliases to prevent CommandRegistrationError
+    for cmd in ['mgg', 'monthlygg', 'monthlygitgudders', 'gitgudders']:
+        bot.remove_command(cmd)
+        
     await bot.add_cog(MonthlyGitgudders(bot))
