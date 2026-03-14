@@ -18,8 +18,6 @@ from tle.util import codeforces_common as cf_common
 _GITGUD_SCORE_DISTRIB = (1, 2, 3, 5, 8, 12, 17, 23)
 _GITGUD_SCORE_DISTRIB_MIN = -400
 _GITGUD_SCORE_DISTRIB_MAX =  300
-_ONE_WEEK_DURATION = 7 * 24 * 60 * 60
-_GITGUD_MORE_POINTS_START_TIME = 1680300000
 
 _DIVISION_RATING_LOW  = (2100, 1600, -1000)
 _DIVISION_RATING_HIGH = (9999, 2099,  1599)
@@ -75,7 +73,6 @@ def get_gudgitters_image(rankings):
     LINE_HEIGHT = 40
     HEIGHT = int((len(rankings) + HEADER_SPACING) * LINE_HEIGHT + 2*BORDER_MARGIN)
     
-    # Cairo+Pango setup
     surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, WIDTH, HEIGHT)
     context = cairo.Context(surface)
     context.set_line_width(1)
@@ -103,7 +100,7 @@ def get_gudgitters_image(rankings):
             text = html.escape(text)
             if bold:
                 text = f'<b>{text}</b>'
-            layout.set_width((width - COLUMN_MARGIN)*1000) # pixel = 1000 pango units
+            layout.set_width((width - COLUMN_MARGIN)*1000)
             layout.set_markup(text, -1)
             PangoCairo.show_layout(context, layout)
             context.rel_move_to(width, 0)
@@ -114,8 +111,6 @@ def get_gudgitters_image(rankings):
         draw(rating)
 
     y = BORDER_MARGIN
-
-    # draw header
     draw_row('#', 'Name', 'Handle', 'Points', SMOKE_WHITE, y, bold=True)
     y += LINE_HEIGHT*HEADER_SPACING
 
@@ -123,7 +118,7 @@ def get_gudgitters_image(rankings):
         color = rating_to_color(rating)
         draw_bg(y, i%2)
         draw_row(str(pos+1), f'{name}', f'{handle} ({rating if rating else "N/A"})' , str(score), color, y)
-        if rating and rating >= 3000:  # nutella
+        if rating and rating >= 3000:
             draw_row('', name[0], handle[0], '', BLACK, y)
         y += LINE_HEIGHT
 
@@ -141,140 +136,111 @@ def _calculateGitgudScoreForDelta(delta):
     index = (delta - _GITGUD_SCORE_DISTRIB_MIN)//100
     return _GITGUD_SCORE_DISTRIB[index]
 
-def _check_more_points_active(now_time, start_time, end_time):
-    morePointsActive = False
-    morePointsTime = end_time - _ONE_WEEK_DURATION
-    if start_time >= _GITGUD_MORE_POINTS_START_TIME and now_time >= morePointsTime: 
-        morePointsActive = True
-    return morePointsActive
-
 class DailyGitgudders(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    async def cog_load(self):
         self.daily_announcement_task.start()
 
     def cog_unload(self):
         self.daily_announcement_task.cancel()
 
+    def _get_announcement_channel(self, guild):
+        """Fetches the exact channel TLE uses for Rating Changes (logging channel)."""
+        channel_id = None
+        if hasattr(cf_common.user_db, 'get_logging_channel'):
+            channel_id = cf_common.user_db.get_logging_channel(guild.id)
+        elif hasattr(cf_common.user_db, 'get_cf_logging_channel'):
+            channel_id = cf_common.user_db.get_cf_logging_channel(guild.id)
+            
+        if not channel_id:
+            channel_ids_str = os.environ.get("CHANNEL_IDS", os.environ.get("CHANNEL_ID"))
+            if channel_ids_str:
+                for cid in channel_ids_str.split(","):
+                    if cid.strip().isdigit() and guild.get_channel(int(cid.strip())):
+                        return int(cid.strip())
+        return channel_id
+
     def get_daily_scores(self, guild_id, start_time, end_time):
-        """Helper function to calculate scores for all users in a given daily timeframe."""
         res = cf_common.user_db.get_cf_users_for_guild(guild_id)
         if not res:
             return []
             
         user_scores = []
-        
         for user_id, cf_user in res:
             data = cf_common.user_db.gitlog(user_id)
-            if not data:
-                continue
+            if not data: continue
                 
             score = 0
             for entry in data:
                 issue, finish, name, contest, index, delta, status = entry
-                
-                # Check if the problem was finished within the target day
                 if finish and start_time <= finish < end_time:
                     pts = _calculateGitgudScoreForDelta(delta)
-                    
-                    # Double points check requires the MONTH boundaries of when it was solved
-                    finish_dt = datetime.datetime.fromtimestamp(finish)
-                    month_start, month_end = cf_common.get_start_and_end_of_month(finish_dt)
-                    
-                    if _check_more_points_active(finish, month_start, month_end):
-                        pts *= 2
+                    # Double points are usually only for weekly/monthly goals, not daily.
                     score += pts
                     
-            if score > 0:
-                user_scores.append((score, user_id, cf_user.handle, cf_user.rating))
+            if score > 0: user_scores.append((score, user_id, cf_user.handle, cf_user.rating))
                 
         user_scores.sort(key=lambda x: x[0], reverse=True)
         return user_scores
 
-    async def _do_announcement(self, ref_time: datetime.datetime) -> bool:
-        """Core logic to fetch the leaderboard for the day of `ref_time` and post the top 3."""
+    async def _do_announcement(self, channel, ref_time: datetime.datetime) -> bool:
         start_time_dt = ref_time.replace(hour=0, minute=0, second=0, microsecond=0)
         end_time_dt = start_time_dt + datetime.timedelta(days=1)
         
         start_time = start_time_dt.timestamp()
         end_time = end_time_dt.timestamp()
         
-        day_name = start_time_dt.strftime('%b %d, %Y')
+        day_name = start_time_dt.strftime('%B %d, %Y')
         
-        # Support either CHANNEL_IDS or CHANNEL_ID for backward compatibility
-        channel_ids_str = os.environ.get("CHANNEL_IDS", os.environ.get("CHANNEL_ID"))
-        if not channel_ids_str:
-            return False
-            
-        channel_ids = [cid.strip() for cid in channel_ids_str.split(",") if cid.strip().isdigit()]
+        user_scores = self.get_daily_scores(channel.guild.id, start_time, end_time)
         
-        announced = False
-        for cid in channel_ids:
-            channel = self.bot.get_channel(int(cid))
-            if not channel:
-                continue
-                
-            user_scores = self.get_daily_scores(channel.guild.id, start_time, end_time)
-            
-            if not user_scores:
-                embed = discord.Embed(
-                    title=f"🗓️ Daily Gitgudders Wrap-Up - {day_name} 🗓️",
-                    description="No one earned any points today! The daily leaderboard was empty! 💻",
-                    color=discord.Color.light_grey()
-                )
-                await channel.send(embed=embed)
-                announced = True
-                continue
-                
-            top_3 = user_scores[:3]
-            medals = ["🥇", "🥈", "🥉"]
-            desc = f"🔥 **The grind never stops! Here are the top performers for {day_name}:** 🔥\n\n"
-            
-            for i, (score, user_id, handle, rating) in enumerate(top_3):
-                member = channel.guild.get_member(user_id)
-                mention = member.mention if member else f"`{handle}`"
-                desc += f"{medals[i]} {mention} — **{score}** points\n"
-                
-            desc += "\n*Points have been reset. A new daily grind begins!*"
-            
+        if not user_scores:
             embed = discord.Embed(
-                title="🗓️ Daily Gitgudders Wrap-Up 🗓️", 
-                description=desc, 
-                color=discord.Color.blue()
+                title=f"📅 Daily Gitgudders Wrap-Up - {day_name} 📅",
+                description="No one earned any points today! Get back on the grind tomorrow! 💻",
+                color=discord.Color.light_grey()
             )
-            
             await channel.send(embed=embed)
-            announced = True
-
-        return announced
+            return True
+            
+        top_3 = user_scores[:3]
+        medals = ["🥇", "🥈", "🥉"]
+        desc = f"🔥 **The grind never stops! Here are the top performers for {day_name}:** 🔥\n\n"
+        
+        for i, (score, user_id, handle, rating) in enumerate(top_3):
+            member = channel.guild.get_member(user_id)
+            mention = member.mention if member else f"`{handle}`"
+            desc += f"{medals[i]} {mention} — **{score}** points\n"
+            
+        desc += "\n*Points will reset at midnight. Keep up the great work!*"
+        
+        embed = discord.Embed(title="📅 Daily Gitgudders Wrap-Up 📅", description=desc, color=discord.Color.blue())
+        await channel.send(embed=embed)
+        return True
 
     @tasks.loop(time=datetime.time(hour=21, minute=0, second=0))
     async def daily_announcement_task(self):
-        """Runs every day at 00:00 UTC+3 (21:00 UTC). Announces the previous day's results."""
-        # Get the announcement channel used for rating changes
-        channel_id = cf_common.user_db.get_announcement_channel(self.bot.guild.id)
-        if channel_id is None:
-            return
-        
-        channel = self.bot.get_channel(channel_id)
-        if channel is None:
-            return
-
+        """Runs every day at 00:00 UTC+3. Announces the previous day."""
         now = datetime.datetime.now(datetime.timezone.utc)
-        # We subtract 1 day to push the reference time back into the day that just ended.
-        ref_time = now - datetime.timedelta(days=1)
-        
-        # Call the existing internal announcement logic
-        await self._do_announcement(channel, ref_time)
+        for guild in self.bot.guilds:
+            channel_id = self._get_announcement_channel(guild)
+            if not channel_id: continue
+            
+            channel = guild.get_channel(channel_id)
+            if not channel: continue
+
+            # Subtract 1 day to ensure we calculate the day that just ended
+            ref_time = now - datetime.timedelta(days=1)
+            await self._do_announcement(channel, ref_time)
 
     @daily_announcement_task.before_loop
     async def before_daily_announcement(self):
-        """Wait until the bot is ready before starting the loop."""
         await self.bot.wait_until_ready()
 
     @commands.hybrid_command(description="View the Daily Gitgudders leaderboard", aliases=["dailygitgudders", "dailygg"], usage="[div1|div2|div3] [+all]")
     async def dgg(self, ctx, *args):
-        """Displays the Gitgudders leaderboard for the current day."""
         division = None
         showall = False
         
@@ -282,48 +248,30 @@ class DailyGitgudders(commands.Cog):
             if arg[0:3] == 'div':
                 try:
                     division = int(arg[3])
-                    if division < 1 or division > 3: 
-                        await ctx.send('Division number must be within range [1-3]')
-                        return
-                except ValueError:
-                    await ctx.send(f'{arg} is an invalid div argument')
-                    return
-            if arg == "+all":
-                showall = True
+                    if division < 1 or division > 3: return await ctx.send('Division number must be within range [1-3]')
+                except ValueError: return await ctx.send(f'{arg} is an invalid div argument')
+            if arg == "+all": showall = True
                 
         now = datetime.datetime.now()
-        
-        # Calculate start and end of the current day
         start_time_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end_time_dt = start_time_dt + datetime.timedelta(days=1)
         
-        start_time = start_time_dt.timestamp()
-        end_time = end_time_dt.timestamp()
-        
-        user_scores = self.get_daily_scores(ctx.guild.id, start_time, end_time)
+        user_scores = self.get_daily_scores(ctx.guild.id, start_time_dt.timestamp(), end_time_dt.timestamp())
         
         rankings = []
         index = 0
         for score, user_id, handle, rating in user_scores:
             member = ctx.guild.get_member(user_id)
-            if not showall and member is None:
-                continue
-                
+            if not showall and member is None: continue
             discord_handle = member.display_name if member else ""
-            
             if division is not None:
-                if rating is None: continue
-                if rating < _DIVISION_RATING_LOW[division-1] or rating > _DIVISION_RATING_HIGH[division-1]:
-                    continue
+                if rating is None or rating < _DIVISION_RATING_LOW[division-1] or rating > _DIVISION_RATING_HIGH[division-1]: continue
                     
             rankings.append((index, discord_handle, handle, rating, score))
             index += 1
-            if index == 20: # Limit to top 20 like mgg
-                break
+            if index == 20: break
         
-        if not rankings:
-            await ctx.send("No one has earned any points today yet! Get to coding! 💻")
-            return
+        if not rankings: return await ctx.send("No one has earned any points today yet! Get to coding! 💻")
 
         discord_file = get_gudgitters_image(rankings)
         await ctx.send(file=discord_file)
@@ -331,14 +279,16 @@ class DailyGitgudders(commands.Cog):
     @commands.hybrid_command(hidden=True)
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def force_announce_dgg(self, ctx):
-        """Admin command to manually trigger the Top 3 announcement for the CURRENT day."""
-        # Use current time as the reference to announce the day we are currently in
-        announced = await self._do_announcement(datetime.datetime.now())
+        channel_id = self._get_announcement_channel(ctx.guild)
+        if not channel_id: return await ctx.send("No announcement/logging channel configured for this server. Use `;logging set`.")
+            
+        channel = ctx.guild.get_channel(channel_id)
+        if not channel: return await ctx.send("Configured logging channel not found.")
 
-        if announced:
+        if await self._do_announcement(channel, datetime.datetime.now()):
             await ctx.message.add_reaction("✅")
-        else:
-            await ctx.send("Could not find the configured channels to announce in. (Check CHANNEL_IDS env variable)")
 
 async def setup(bot):
+    for cmd in ['dgg', 'dailygg', 'dailygitgudders']: bot.remove_command(cmd)
+    if bot.get_cog('DailyGitgudders'): await bot.remove_cog('DailyGitgudders')
     await bot.add_cog(DailyGitgudders(bot))
