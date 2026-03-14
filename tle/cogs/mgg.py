@@ -130,7 +130,7 @@ def get_gudgitters_image(rankings):
     image_data = io.BytesIO()
     surface.write_to_png(image_data)
     image_data.seek(0)
-    discord_file = discord.File(image_data, filename='mgg_leaderboard.png')
+    discord_file = discord.File(image_data, filename='wgg_leaderboard.png')
     return discord_file
 
 def _calculateGitgudScoreForDelta(delta):
@@ -148,16 +148,16 @@ def _check_more_points_active(now_time, start_time, end_time):
         morePointsActive = True
     return morePointsActive
 
-class MonthlyGitgudders(commands.Cog):
+class WeeklyGitgudders(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.monthly_announcement_task.start()
+        self.weekly_announcement_task.start()
 
     def cog_unload(self):
-        self.monthly_announcement_task.cancel()
+        self.weekly_announcement_task.cancel()
 
-    def get_monthly_scores(self, guild_id, start_time, end_time):
-        """Helper function to calculate scores for all users in a given monthly timeframe."""
+    def get_weekly_scores(self, guild_id, start_time, end_time):
+        """Helper function to calculate scores for all users in a given week timeframe."""
         res = cf_common.user_db.get_cf_users_for_guild(guild_id)
         if not res:
             return []
@@ -173,7 +173,7 @@ class MonthlyGitgudders(commands.Cog):
             for entry in data:
                 issue, finish, name, contest, index, delta, status = entry
                 
-                # Check if the problem was finished within the target month
+                # Check if the problem was finished within the target week
                 if finish and start_time <= finish < end_time:
                     pts = _calculateGitgudScoreForDelta(delta)
                     
@@ -191,84 +191,79 @@ class MonthlyGitgudders(commands.Cog):
         user_scores.sort(key=lambda x: x[0], reverse=True)
         return user_scores
 
-    async def _do_announcement(self, ref_time: datetime.datetime) -> bool:
-        """Core logic to fetch the leaderboard for the month of `ref_time` and post the top 3."""
-        start_time_dt = ref_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        
-        if start_time_dt.month == 12:
-            end_time_dt = start_time_dt.replace(year=start_time_dt.year + 1, month=1)
-        else:
-            end_time_dt = start_time_dt.replace(month=start_time_dt.month + 1)
+    async def _do_announcement(self, channel, ref_time: datetime.datetime) -> bool:
+        """Core logic to fetch the leaderboard for the week of `ref_time` and post the top 3."""
+        start_of_week = ref_time - datetime.timedelta(days=ref_time.weekday())
+        start_time_dt = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_time_dt = start_time_dt + datetime.timedelta(days=7)
         
         start_time = start_time_dt.timestamp()
         end_time = end_time_dt.timestamp()
         
-        month_name = start_time_dt.strftime('%B %Y')
+        week_num = start_time_dt.isocalendar()[1]
+        end_of_week_display = end_time_dt - datetime.timedelta(days=1)
+        week_name = f"Week {week_num} ({start_time_dt.strftime('%b %d')} - {end_of_week_display.strftime('%b %d')})"
         
-        # Support either CHANNEL_IDS or CHANNEL_ID for backward compatibility
-        channel_ids_str = os.environ.get("CHANNEL_IDS", os.environ.get("CHANNEL_ID"))
-        if not channel_ids_str:
-            return False
-            
-        channel_ids = [cid.strip() for cid in channel_ids_str.split(",") if cid.strip().isdigit()]
+        user_scores = self.get_weekly_scores(channel.guild.id, start_time, end_time)
         
-        announced = False
-        for cid in channel_ids:
-            channel = self.bot.get_channel(int(cid))
-            if not channel:
-                continue
-                
-            user_scores = self.get_monthly_scores(channel.guild.id, start_time, end_time)
-            
-            if not user_scores:
-                embed = discord.Embed(
-                    title=f"🗓️ Monthly Gitgudders Wrap-Up - {month_name} 🗓️",
-                    description="No one earned any points this month! The leaderboard is wide open! 💻",
-                    color=discord.Color.light_grey()
-                )
-                await channel.send(embed=embed)
-                announced = True
-                continue
-                
-            top_3 = user_scores[:3]
-            medals = ["🥇", "🥈", "🥉"]
-            desc = f"🔥 **The grind never stops! Here are the top performers for {month_name}:** 🔥\n\n"
-            
-            for i, (score, user_id, handle, rating) in enumerate(top_3):
-                member = channel.guild.get_member(user_id)
-                mention = member.mention if member else f"`{handle}`"
-                desc += f"{medals[i]} {mention} — **{score}** points\n"
-                
-            desc += "\n*Points have been reset. A new monthly grind begins!*"
-            
+        if not user_scores:
             embed = discord.Embed(
-                title="🗓️ Monthly Gitgudders Wrap-Up 🗓️", 
-                description=desc, 
-                color=discord.Color.blue()
+                title=f"🗓️ Weekly Gitgudders Wrap-Up - {week_name} 🗓️",
+                description="No one earned any points this week! The leaderboard is wide open! 💻",
+                color=discord.Color.light_grey()
             )
-            
             await channel.send(embed=embed)
-            announced = True
+            return True
+            
+        top_3 = user_scores[:3]
+        medals = ["🥇", "🥈", "🥉"]
+        desc = f"🔥 **The grind never stops! Here are the top performers for {week_name}:** 🔥\n\n"
+        
+        for i, (score, user_id, handle, rating) in enumerate(top_3):
+            member = channel.guild.get_member(user_id)
+            mention = member.mention if member else f"`{handle}`"
+            desc += f"{medals[i]} {mention} — **{score}** points\n"
+            
+        desc += "\n*Points will reset on Monday. Keep up the great work!*"
+        
+        embed = discord.Embed(
+            title="🗓️ Weekly Gitgudders Wrap-Up 🗓️", 
+            description=desc, 
+            color=discord.Color.blue()
+        )
+        
+        await channel.send(embed=embed)
+        return True
 
-        return announced
+    @tasks.loop(time=datetime.time(hour=21, minute=0, second=0))
+    async def weekly_announcement_task(self):
+        """Runs every day at 00:00 UTC+3 (21:00 UTC). On Mondays, announces the previous week's results."""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        
+        # weekday() == 0 is Monday
+        if now.weekday() == 0:
+            # Look for the announcement channel in each guild the bot is in
+            for guild in self.bot.guilds:
+                channel_id = cf_common.user_db.get_announcement_channel(guild.id)
+                if not channel_id:
+                    continue
+                
+                channel = guild.get_channel(channel_id)
+                if not channel:
+                    continue
 
-    @tasks.loop(time=datetime.time(hour=0, minute=0, second=0))
-    async def monthly_announcement_task(self):
-        """Runs every day at midnight. On the 1st of the month, announces the previous month's results."""
-        now = datetime.datetime.now()
-        # If today is the 1st, announce the month that just ended
-        if now.day == 1:
-            ref_time = now - datetime.timedelta(days=1)
-            await self._do_announcement(ref_time)
+                # Subtract 1 day to ensure we calculate the week that just ended
+                ref_time = now - datetime.timedelta(days=1)
+                await self._do_announcement(channel, ref_time)
 
-    @monthly_announcement_task.before_loop
-    async def before_monthly_announcement(self):
+    @weekly_announcement_task.before_loop
+    async def before_weekly_announcement(self):
         """Wait until the bot is ready before starting the loop."""
         await self.bot.wait_until_ready()
 
-    @commands.hybrid_command(description="View the Monthly Gitgudders leaderboard", aliases=["monthlygitgudders", "monthlygg"], usage="[div1|div2|div3] [+all]")
-    async def mgg(self, ctx, *args):
-        """Displays the Gitgudders leaderboard for the current month."""
+    @commands.hybrid_command(description="View the Weekly Gitgudders leaderboard", aliases=["weeklygitgudders", "weeklygg"], usage="[div1|div2|div3] [+all]")
+    async def wgg(self, ctx, *args):
+        """Displays the Gitgudders leaderboard for the current week (Monday to Sunday)."""
         division = None
         showall = False
         
@@ -286,16 +281,16 @@ class MonthlyGitgudders(commands.Cog):
                 showall = True
                 
         now = datetime.datetime.now()
-        start_time_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        if start_time_dt.month == 12:
-            end_time_dt = start_time_dt.replace(year=start_time_dt.year + 1, month=1)
-        else:
-            end_time_dt = start_time_dt.replace(month=start_time_dt.month + 1)
+        
+        # Calculate start and end of the current week
+        start_of_week = now - datetime.timedelta(days=now.weekday())
+        start_time_dt = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_time_dt = start_time_dt + datetime.timedelta(days=7)
         
         start_time = start_time_dt.timestamp()
         end_time = end_time_dt.timestamp()
         
-        user_scores = self.get_monthly_scores(ctx.guild.id, start_time, end_time)
+        user_scores = self.get_weekly_scores(ctx.guild.id, start_time, end_time)
         
         rankings = []
         index = 0
@@ -313,11 +308,11 @@ class MonthlyGitgudders(commands.Cog):
                     
             rankings.append((index, discord_handle, handle, rating, score))
             index += 1
-            if index == 20: 
+            if index == 20: # Limit to top 20 like mgg
                 break
         
         if not rankings:
-            await ctx.send("No one has earned any points this month yet! Get to coding! 💻")
+            await ctx.send("No one has earned any points this week yet! Get to coding! 💻")
             return
 
         discord_file = get_gudgitters_image(rankings)
@@ -325,18 +320,23 @@ class MonthlyGitgudders(commands.Cog):
 
     @commands.hybrid_command(hidden=True)
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
-    async def force_mgg_update(self, ctx):
-        """Admin command to manually trigger the Top 3 announcement for the CURRENT month."""
-        announced = await self._do_announcement(datetime.datetime.now())
+    async def force_announce_wgg(self, ctx):
+        """Admin command to manually trigger the Top 3 announcement for the CURRENT week."""
+        channel_id = cf_common.user_db.get_announcement_channel(ctx.guild.id)
+        if not channel_id:
+            await ctx.send("No announcement channel configured for this server. Use `;set_announcement_channel`.")
+            return
+            
+        channel = ctx.guild.get_channel(channel_id)
+        if not channel:
+            await ctx.send("Configured announcement channel not found.")
+            return
+
+        # Use current time as the reference to announce the week we are currently in
+        announced = await self._do_announcement(channel, datetime.datetime.now())
 
         if announced:
             await ctx.message.add_reaction("✅")
-        else:
-            await ctx.send("Could not find the configured channels to announce in. (Check CHANNEL_IDS env variable)")
 
 async def setup(bot):
-    # Unregister the default built-in commands/aliases to prevent CommandRegistrationError
-    for cmd in ['mgg', 'monthlygg', 'monthlygitgudders', 'gitgudders']:
-        bot.remove_command(cmd)
-        
-    await bot.add_cog(MonthlyGitgudders(bot))
+    await bot.add_cog(WeeklyGitgudders(bot))

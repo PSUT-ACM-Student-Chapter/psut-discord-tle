@@ -248,13 +248,24 @@ class DailyGitgudders(commands.Cog):
 
         return announced
 
-    @tasks.loop(time=datetime.time(hour=0, minute=0, second=0))
+    @tasks.loop(time=datetime.time(hour=21, minute=0, second=0))
     async def daily_announcement_task(self):
-        """Runs every day at midnight. Announces the previous day's results."""
-        now = datetime.datetime.now()
+        """Runs every day at 00:00 UTC+3 (21:00 UTC). Announces the previous day's results."""
+        # Get the announcement channel used for rating changes
+        channel_id = cf_common.user_db.get_announcement_channel(self.bot.guild.id)
+        if channel_id is None:
+            return
+        
+        channel = self.bot.get_channel(channel_id)
+        if channel is None:
+            return
+
+        now = datetime.datetime.now(datetime.timezone.utc)
         # We subtract 1 day to push the reference time back into the day that just ended.
         ref_time = now - datetime.timedelta(days=1)
-        await self._do_announcement(ref_time)
+        
+        # Call the existing internal announcement logic
+        await self._do_announcement(channel, ref_time)
 
     @daily_announcement_task.before_loop
     async def before_daily_announcement(self):
