@@ -132,6 +132,7 @@ class Fair(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.CACHE_DURATION = 1800  # 30 minutes
+        self.converter = commands.MemberConverter()
         
         self.db_conn = sqlite3.connect('fair_cache.db')
         # Bumped to cache_v3 to avoid OperationalError with existing days vs timeframe column schema
@@ -327,9 +328,9 @@ class Fair(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Error updating cache: {e}")
 
-    @commands.hybrid_command(description="Recommend a fair duel between active DGG/WGG/MGG participants")
-    async def fair_duel(self, ctx):
-        """Recommends a fair duel between active Gitgud participants."""
+    @commands.hybrid_command(description="Recommend a fair duel between active DGG/WGG/MGG participants", usage="[handle]")
+    async def fair_duel(self, ctx, *args: str):
+        """Recommends a fair duel between active Gitgud participants. Provide a handle to find an opponent for them."""
         guild_id = ctx.guild.id
         res = cf_common.user_db.get_cf_users_for_guild(guild_id)
         if not res:
@@ -357,44 +358,100 @@ class Fair(commands.Cog):
             if has_recent and cf_user.rating is not None:
                 active_users.append((user_id, cf_user))
 
-        if len(active_users) < 2:
-            await ctx.send("❌ Not enough active participants in the recent gitgud challenges to recommend a duel.")
-            return
+        # Check if user provided arguments
+        if not args:
+            # === NO HANDLE PROVIDED: NORMAL BEHAVIOR (ANY TWO ACTIVE USERS) ===
+            if len(active_users) < 2:
+                await ctx.send("❌ Not enough active participants in the recent gitgud challenges to recommend a duel.")
+                return
 
-        active_users.sort(key=lambda x: x[1].rating)
-        
-        fair_pairs = []
-        best_pair = None
-        min_diff = float('inf')
+            active_users.sort(key=lambda x: x[1].rating)
+            
+            fair_pairs = []
+            best_pair = None
+            min_diff = float('inf')
 
-        for i in range(len(active_users)):
-            for j in range(i + 1, len(active_users)):
-                diff = abs(active_users[i][1].rating - active_users[j][1].rating)
+            for i in range(len(active_users)):
+                for j in range(i + 1, len(active_users)):
+                    diff = abs(active_users[i][1].rating - active_users[j][1].rating)
+                    if diff <= 100:
+                        fair_pairs.append((active_users[i], active_users[j], diff))
+                    
+                    if diff < min_diff:
+                        min_diff = diff
+                        best_pair = (active_users[i], active_users[j], diff)
+
+            if fair_pairs:
+                chosen_pair = random.choice(fair_pairs)
+            else:
+                chosen_pair = best_pair
+
+            user1, user2, diff = chosen_pair
+        else:
+            # === HANDLE PROVIDED: FIND BEST DUEL FOR SPECIFIC USER ===
+            try:
+                resolved_users = await cf_common.resolve_handles(ctx, self.converter, args)
+                target_cf_user = resolved_users[0]
+            except Exception as e:
+                await ctx.send(f"❌ Failed to resolve handle: {e}")
+                return
+                
+            target_handle = target_cf_user.handle
+            target_rating = target_cf_user.rating or 1500
+            
+            # Find the target user's Discord ID if they are registered in the server
+            target_user_id = None
+            for u_id, c_user in res:
+                if c_user.handle.lower() == target_handle.lower():
+                    target_user_id = u_id
+                    break
+                    
+            user1 = (target_user_id, target_cf_user)
+            
+            # Find the best opponent from the active users list
+            fair_opponents = []
+            best_opponent = None
+            min_diff = float('inf')
+
+            for u_id, c_user in active_users:
+                # Prevent dueling yourself
+                if c_user.handle.lower() == target_handle.lower():
+                    continue
+                    
+                diff = abs(target_rating - c_user.rating)
                 if diff <= 100:
-                    fair_pairs.append((active_users[i], active_users[j], diff))
+                    fair_opponents.append(( (u_id, c_user), diff ))
                 
                 if diff < min_diff:
                     min_diff = diff
-                    best_pair = (active_users[i], active_users[j], diff)
+                    best_opponent = ( (u_id, c_user), diff )
 
-        if fair_pairs:
-            chosen_pair = random.choice(fair_pairs)
-        else:
-            chosen_pair = best_pair
+            if fair_opponents:
+                chosen_opp_data = random.choice(fair_opponents)
+            else:
+                chosen_opp_data = best_opponent
 
-        user1, user2, diff = chosen_pair
-        
-        member1 = ctx.guild.get_member(user1[0])
-        member2 = ctx.guild.get_member(user2[0])
+            if not chosen_opp_data:
+                await ctx.send("❌ Not enough active participants to find an opponent.")
+                return
+
+            user2, diff = chosen_opp_data
+            
+        # Display the result
+        member1 = ctx.guild.get_member(user1[0]) if user1[0] else None
+        member2 = ctx.guild.get_member(user2[0]) if user2[0] else None
         
         mention1 = member1.mention if member1 else f"`{user1[1].handle}`"
         mention2 = member2.mention if member2 else f"`{user2[1].handle}`"
+        
+        rating1 = user1[1].rating if user1[1].rating is not None else "Unrated"
+        rating2 = user2[1].rating if user2[1].rating is not None else "Unrated"
 
         embed = discord.Embed(
             title="⚔️ Fair Duel Recommendation ⚔️",
             description=f"Based on recent active participation in the Gitgudders (DGG/WGG/MGG), we recommend a duel between:\n\n"
-                        f"🔴 {mention1} (Rating: **{user1[1].rating}**)\n"
-                        f"🔵 {mention2} (Rating: **{user2[1].rating}**)\n\n"
+                        f"🔴 {mention1} (Rating: **{rating1}**)\n"
+                        f"🔵 {mention2} (Rating: **{rating2}**)\n\n"
                         f"**Rating Difference:** {diff} points",
             color=discord.Color.dark_teal()
         )

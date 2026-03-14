@@ -2,6 +2,8 @@ import asyncio
 import logging
 import functools
 import random
+import os
+import logging
 
 import discord
 from discord.ext import commands
@@ -17,6 +19,36 @@ _SUCCESS_GREEN = 0x28A745
 _ALERT_AMBER = 0xFFBF00
 _BOT_PREFIX = ';'
 
+logger = logging.getLogger(__name__)
+
+def is_allowed():
+    """
+    Global check: Verifies if the command author's username is in the GLOBAL_ALLOW_LIST
+    defined in the environment variables.
+    """
+    async def predicate(ctx):
+        # Fetch the allowed users from the environment file
+        allow_list_str = os.environ.get('GLOBAL_ALLOW_LIST', '')
+        
+        # Clean up the list
+        allowed_users = [u.strip().lower() for u in allow_list_str.split(',') if u.strip()]
+        
+        if ctx.author.name.lower() in allowed_users:
+            return True
+            
+        logger.warning(f"Unauthorized command attempt for '{ctx.command}' by: {ctx.author.name}")
+        raise commands.CheckFailure("You do not have permission to run this command. You must be on the allow list.")
+        
+    return commands.check(predicate)
+
+# Provide a raw function without the decorator for Cog/Bot level checks
+async def raw_allow_check(ctx):
+    allow_list_str = os.environ.get('GLOBAL_ALLOW_LIST', '')
+    allowed_users = [u.strip().lower() for u in allow_list_str.split(',') if u.strip()]
+    if ctx.author.name.lower() in allowed_users:
+        return True
+    logger.warning(f"Unauthorized command attempt for '{ctx.command}' by: {ctx.author.name}")
+    raise commands.CheckFailure("You do not have permission to run this command.")
 
 def embed_neutral(desc, color=None):
     return discord.Embed(description=str(desc), color=color)
