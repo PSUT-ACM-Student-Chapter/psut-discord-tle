@@ -390,22 +390,26 @@ class Fair(commands.Cog):
         else:
             # === HANDLE PROVIDED: FIND BEST DUEL FOR SPECIFIC USER ===
             try:
-                resolved_users = await cf_common.resolve_handles(ctx, self.converter, args)
-                target_cf_user = resolved_users[0]
+                resolved_handles = await cf_common.resolve_handles(ctx, self.converter, args)
+                target_handle = resolved_handles[0]
             except Exception as e:
                 await ctx.send(f"❌ Failed to resolve handle: {e}")
                 return
-                
-            target_handle = target_cf_user.handle
-            target_rating = target_cf_user.rating or 1500
             
-            # Find the target user's Discord ID if they are registered in the server
+            # Find the target user's Discord ID and CF User object if they are registered in the server
             target_user_id = None
+            target_cf_user = None
             for u_id, c_user in res:
                 if c_user.handle.lower() == target_handle.lower():
                     target_user_id = u_id
+                    target_cf_user = c_user
                     break
-                    
+            
+            if not target_cf_user:
+                await ctx.send(f"❌ User `{target_handle}` is not registered in this server.")
+                return
+                
+            target_rating = target_cf_user.rating or 1500
             user1 = (target_user_id, target_cf_user)
             
             # Find the best opponent from the active users list
