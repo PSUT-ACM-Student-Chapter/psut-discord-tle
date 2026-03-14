@@ -106,18 +106,5 @@ class Announcer(commands.Cog):
             
             await channel.send(embed=embed)
 
-    @commands.hybrid_command(hidden=True)
-    @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
-    async def force_announce_mgg(self, ctx):
-        """Admin command to manually trigger the announcement for the CURRENT month."""
-        now = datetime.datetime.now(datetime.timezone.utc)
-        
-        # Get start and end of the CURRENT month for manual announcements
-        start_time, end_time = cf_common.get_start_and_end_of_month(now)
-        month_name = now.strftime("%B %Y")
-        
-        await self.announce_winners(start_time, end_time, month_name)
-        await ctx.message.add_reaction("✅")
-
 async def setup(bot):
     await bot.add_cog(Announcer(bot))
