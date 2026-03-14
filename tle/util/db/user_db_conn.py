@@ -810,11 +810,17 @@ class UserDbConn:
 
     def get_duel_rating(self, userid, guild_id):
         query = '''
-            SELECT rating FROM user_duel_ratings
+            SELECT rating FROM duelist
             WHERE user_id = ? AND guild_id = ?
         '''
-        res = self.conn.execute(query, (userid,guild_id)).fetchone()
-        return res[0] if res else 1500
+        try:
+            res = self.conn.execute(query, (userid, guild_id)).fetchone()
+            # Even if they exist in the bot, if they've never dueled, res will be None.
+            # This safely falls back to a 1500 rating instead of crashing!
+            return res[0] if res else 1500
+        except Exception:
+            # Fallback in case of an execution/table error
+            return 1500
 
     def is_duelist(self, userid, guild_id):
         query = '''
