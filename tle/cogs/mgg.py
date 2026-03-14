@@ -75,7 +75,6 @@ def get_gudgitters_image(rankings):
     LINE_HEIGHT = 40
     HEIGHT = int((len(rankings) + HEADER_SPACING) * LINE_HEIGHT + 2*BORDER_MARGIN)
     
-    # Cairo+Pango setup
     surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, WIDTH, HEIGHT)
     context = cairo.Context(surface)
     context.set_line_width(1)
@@ -103,7 +102,7 @@ def get_gudgitters_image(rankings):
             text = html.escape(text)
             if bold:
                 text = f'<b>{text}</b>'
-            layout.set_width((width - COLUMN_MARGIN)*1000) # pixel = 1000 pango units
+            layout.set_width((width - COLUMN_MARGIN)*1000)
             layout.set_markup(text, -1)
             PangoCairo.show_layout(context, layout)
             context.rel_move_to(width, 0)
@@ -114,8 +113,6 @@ def get_gudgitters_image(rankings):
         draw(rating)
 
     y = BORDER_MARGIN
-
-    # draw header
     draw_row('#', 'Name', 'Handle', 'Points', SMOKE_WHITE, y, bold=True)
     y += LINE_HEIGHT*HEADER_SPACING
 
@@ -123,7 +120,7 @@ def get_gudgitters_image(rankings):
         color = rating_to_color(rating)
         draw_bg(y, i%2)
         draw_row(str(pos+1), f'{name}', f'{handle} ({rating if rating else "N/A"})' , str(score), color, y)
-        if rating and rating >= 3000:  # nutella
+        if rating and rating >= 3000:
             draw_row('', name[0], handle[0], '', BLACK, y)
         y += LINE_HEIGHT
 
@@ -153,22 +150,19 @@ class MonthlyGitgudders(commands.Cog):
         self.bot = bot
 
     async def cog_load(self):
-        """Called when the cog is loaded. Starts the background task."""
         self.monthly_announcement_task.start()
 
     def cog_unload(self):
         self.monthly_announcement_task.cancel()
 
     def _get_announcement_channel(self, guild):
-        """Helper to safely retrieve the announcement channel."""
+        """Fetches the exact channel TLE uses for Rating Changes (logging channel)."""
         channel_id = None
-        # Try common TLE DB attributes for Codeforces/logging channels safely
-        if hasattr(cf_common.user_db, 'get_cf_announcements_channel'):
-            channel_id = cf_common.user_db.get_cf_announcements_channel(guild.id)
-        elif hasattr(cf_common.user_db, 'get_logging_channel'):
+        if hasattr(cf_common.user_db, 'get_logging_channel'):
             channel_id = cf_common.user_db.get_logging_channel(guild.id)
+        elif hasattr(cf_common.user_db, 'get_cf_logging_channel'):
+            channel_id = cf_common.user_db.get_cf_logging_channel(guild.id)
             
-        # Fallback to the environment variables to guarantee it works
         if not channel_id:
             channel_ids_str = os.environ.get("CHANNEL_IDS", os.environ.get("CHANNEL_ID"))
             if channel_ids_str:
@@ -178,43 +172,34 @@ class MonthlyGitgudders(commands.Cog):
         return channel_id
 
     def get_monthly_scores(self, guild_id, start_time, end_time):
-        """Helper function to calculate scores for all users in a given monthly timeframe."""
         res = cf_common.user_db.get_cf_users_for_guild(guild_id)
         if not res:
             return []
             
         user_scores = []
-        
         for user_id, cf_user in res:
             data = cf_common.user_db.gitlog(user_id)
-            if not data:
-                continue
+            if not data: continue
                 
             score = 0
             for entry in data:
                 issue, finish, name, contest, index, delta, status = entry
-                
-                # Check if the problem was finished within the target month
                 if finish and start_time <= finish < end_time:
                     pts = _calculateGitgudScoreForDelta(delta)
                     
-                    # Double points check requires the MONTH boundaries of when it was solved
                     finish_dt = datetime.datetime.fromtimestamp(finish)
                     month_start, month_end = cf_common.get_start_and_end_of_month(finish_dt)
                     
-                    if _check_more_points_active(finish, month_start, month_end):
+                    if _check_more_points_active(finish, month_start, month_end): 
                         pts *= 2
                     score += pts
                     
-            if score > 0:
-                user_scores.append((score, user_id, cf_user.handle, cf_user.rating))
+            if score > 0: user_scores.append((score, user_id, cf_user.handle, cf_user.rating))
                 
         user_scores.sort(key=lambda x: x[0], reverse=True)
         return user_scores
 
     async def _do_announcement(self, channel, ref_time: datetime.datetime) -> bool:
-        """Core logic to fetch the leaderboard for the month of `ref_time` and post the top 3."""
-        # start_time_dt is the 1st of the month for ref_time
         start_time_dt = ref_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         
         if start_time_dt.month == 12:
@@ -249,43 +234,33 @@ class MonthlyGitgudders(commands.Cog):
             
         desc += "\n*Points have been reset. A new monthly grind begins!*"
         
-        embed = discord.Embed(
-            title="🗓️ Monthly Gitgudders Wrap-Up 🗓️", 
-            description=desc, 
-            color=discord.Color.blue()
-        )
-        
+        embed = discord.Embed(title="🗓️ Monthly Gitgudders Wrap-Up 🗓️", description=desc, color=discord.Color.blue())
         await channel.send(embed=embed)
         return True
 
     @tasks.loop(time=datetime.time(hour=21, minute=0, second=0))
     async def monthly_announcement_task(self):
-        """Runs every day at 00:00 UTC+3 (21:00 UTC). On the 1st of the month, announces the previous month's results."""
+        """Runs every day at 00:00 UTC+3. On the 1st, announces the previous month."""
         now = datetime.datetime.now(datetime.timezone.utc)
         
-        # If today is the 1st, announce the month that just ended
         if now.day == 1:
             for guild in self.bot.guilds:
                 channel_id = self._get_announcement_channel(guild)
-                if not channel_id:
-                    continue
+                if not channel_id: continue
                 
                 channel = guild.get_channel(channel_id)
-                if not channel:
-                    continue
+                if not channel: continue
 
-                # Yesterday was the last day of the month we want to announce
+                # Subtract 1 day to ensure we calculate the month that just ended
                 ref_time = now - datetime.timedelta(days=1)
                 await self._do_announcement(channel, ref_time)
 
     @monthly_announcement_task.before_loop
     async def before_monthly_announcement(self):
-        """Wait until the bot is ready before starting the loop."""
         await self.bot.wait_until_ready()
 
     @commands.hybrid_command(description="View the Monthly Gitgudders leaderboard", aliases=["monthlygitgudders", "monthlygg"], usage="[div1|div2|div3] [+all]")
     async def mgg(self, ctx, *args):
-        """Displays the Gitgudders leaderboard for the current month."""
         division = None
         showall = False
         
@@ -293,80 +268,51 @@ class MonthlyGitgudders(commands.Cog):
             if arg[0:3] == 'div':
                 try:
                     division = int(arg[3])
-                    if division < 1 or division > 3: 
-                        await ctx.send('Division number must be within range [1-3]')
-                        return
-                except ValueError:
-                    await ctx.send(f'{arg} is an invalid div argument')
-                    return
-            if arg == "+all":
-                showall = True
+                    if division < 1 or division > 3: return await ctx.send('Division number must be within range [1-3]')
+                except ValueError: return await ctx.send(f'{arg} is an invalid div argument')
+            if arg == "+all": showall = True
                 
         now = datetime.datetime.now()
         start_time_dt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        
         if start_time_dt.month == 12:
             end_time_dt = start_time_dt.replace(year=start_time_dt.year + 1, month=1)
         else:
             end_time_dt = start_time_dt.replace(month=start_time_dt.month + 1)
         
-        start_time = start_time_dt.timestamp()
-        end_time = end_time_dt.timestamp()
-        
-        user_scores = self.get_monthly_scores(ctx.guild.id, start_time, end_time)
+        user_scores = self.get_monthly_scores(ctx.guild.id, start_time_dt.timestamp(), end_time_dt.timestamp())
         
         rankings = []
         index = 0
         for score, user_id, handle, rating in user_scores:
             member = ctx.guild.get_member(user_id)
-            if not showall and member is None:
-                continue
-                
+            if not showall and member is None: continue
             discord_handle = member.display_name if member else ""
-            
             if division is not None:
-                if rating is None: continue
-                if rating < _DIVISION_RATING_LOW[division-1] or rating > _DIVISION_RATING_HIGH[division-1]:
-                    continue
+                if rating is None or rating < _DIVISION_RATING_LOW[division-1] or rating > _DIVISION_RATING_HIGH[division-1]: continue
                     
             rankings.append((index, discord_handle, handle, rating, score))
             index += 1
-            if index == 20: 
-                break
+            if index == 20: break
         
-        if not rankings:
-            await ctx.send("No one has earned any points this month yet! Get to coding! 💻")
-            return
+        if not rankings: return await ctx.send("No one has earned any points this month yet! Get to coding! 💻")
 
         discord_file = get_gudgitters_image(rankings)
         await ctx.send(file=discord_file)
 
     @commands.hybrid_command(hidden=True)
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
-    async def force_mgg_update(self, ctx):
-        """Admin command to manually trigger the Top 3 announcement for the CURRENT month."""
+    async def force_announce_mgg(self, ctx):
         channel_id = self._get_announcement_channel(ctx.guild)
-        if not channel_id:
-            await ctx.send("No announcement channel configured for this server. Check DB settings or CHANNEL_IDS env variable.")
-            return
+        if not channel_id: return await ctx.send("No announcement/logging channel configured for this server. Use `;logging set`.")
             
         channel = ctx.guild.get_channel(channel_id)
-        if not channel:
-            await ctx.send("Configured announcement channel not found.")
-            return
+        if not channel: return await ctx.send("Configured logging channel not found.")
 
-        # Use current time as the reference to announce the month we are currently in
-        announced = await self._do_announcement(channel, datetime.datetime.now())
-
-        if announced:
+        if await self._do_announcement(channel, datetime.datetime.now()):
             await ctx.message.add_reaction("✅")
 
 async def setup(bot):
-    # Unregister commands to avoid conflicts
-    for cmd in ['mgg', 'monthlygg', 'monthlygitgudders', 'gitgudders']:
-        bot.remove_command(cmd)
-    
-    # Check if the cog is already loaded to avoid ClientException
-    if bot.get_cog('MonthlyGitgudders'):
-        await bot.remove_cog('MonthlyGitgudders')
-        
+    for cmd in ['mgg', 'monthlygg', 'monthlygitgudders', 'gitgudders']: bot.remove_command(cmd)
+    if bot.get_cog('MonthlyGitgudders'): await bot.remove_cog('MonthlyGitgudders')
     await bot.add_cog(MonthlyGitgudders(bot))
