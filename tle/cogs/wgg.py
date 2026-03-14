@@ -292,7 +292,7 @@ class WeeklyGitgudders(commands.Cog):
         await ctx.send(file=discord_file)
 
     @commands.hybrid_command(hidden=True)
-#    @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
+    @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def force_announce_wgg(self, ctx):
         channel_id = self._get_announcement_channel(ctx.guild)
         if not channel_id: return await ctx.send("No announcement/logging channel configured for this server. Use `;logging set`.")
