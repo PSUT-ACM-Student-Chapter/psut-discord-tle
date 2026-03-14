@@ -365,27 +365,23 @@ class Fair(commands.Cog):
                 await ctx.send("❌ Not enough active participants in the recent gitgud challenges to recommend a duel.")
                 return
 
-            active_users.sort(key=lambda x: x[1].rating)
-            
-            fair_pairs = []
-            best_pair = None
-            min_diff = float('inf')
-
+            all_pairs = []
             for i in range(len(active_users)):
                 for j in range(i + 1, len(active_users)):
                     diff = abs(active_users[i][1].rating - active_users[j][1].rating)
-                    if diff <= 100:
-                        fair_pairs.append((active_users[i], active_users[j], diff))
-                    
-                    if diff < min_diff:
-                        min_diff = diff
-                        best_pair = (active_users[i], active_users[j], diff)
+                    all_pairs.append((active_users[i], active_users[j], diff))
 
-            if fair_pairs:
-                chosen_pair = random.choice(fair_pairs)
-            else:
-                chosen_pair = best_pair
+            # Sort by rating difference to find the closest matches
+            all_pairs.sort(key=lambda x: x[2])
+            
+            # Create a pool of "fair" matches: everyone within 150 rating difference
+            pool = [p for p in all_pairs if p[2] <= 150]
+            
+            # To ensure it's not deterministic even with sparse ratings, guarantee at least 3 choices
+            if len(pool) < 3:
+                pool = all_pairs[:min(3, len(all_pairs))]
 
+            chosen_pair = random.choice(pool)
             user1, user2, diff = chosen_pair
         else:
             # === HANDLE PROVIDED: FIND BEST DUEL FOR SPECIFIC USER ===
@@ -413,32 +409,30 @@ class Fair(commands.Cog):
             user1 = (target_user_id, target_cf_user)
             
             # Find the best opponent from the active users list
-            fair_opponents = []
-            best_opponent = None
-            min_diff = float('inf')
-
+            all_opponents = []
             for u_id, c_user in active_users:
                 # Prevent dueling yourself
                 if c_user.handle.lower() == target_handle.lower():
                     continue
                     
                 diff = abs(target_rating - c_user.rating)
-                if diff <= 100:
-                    fair_opponents.append(( (u_id, c_user), diff ))
-                
-                if diff < min_diff:
-                    min_diff = diff
-                    best_opponent = ( (u_id, c_user), diff )
+                all_opponents.append(( (u_id, c_user), diff ))
 
-            if fair_opponents:
-                chosen_opp_data = random.choice(fair_opponents)
-            else:
-                chosen_opp_data = best_opponent
-
-            if not chosen_opp_data:
+            if not all_opponents:
                 await ctx.send("❌ Not enough active participants to find an opponent.")
                 return
 
+            # Sort opponents by rating difference
+            all_opponents.sort(key=lambda x: x[1])
+            
+            # Create a pool of "fair" opponents: everyone within 150 rating difference
+            pool = [opp for opp in all_opponents if opp[1] <= 150]
+            
+            # To ensure fun/non-determinism, guarantee at least 3 choices
+            if len(pool) < 3:
+                pool = all_opponents[:min(3, len(all_opponents))]
+
+            chosen_opp_data = random.choice(pool)
             user2, diff = chosen_opp_data
             
         # Display the result
