@@ -159,6 +159,24 @@ class MonthlyGitgudders(commands.Cog):
     def cog_unload(self):
         self.monthly_announcement_task.cancel()
 
+    def _get_announcement_channel(self, guild):
+        """Helper to safely retrieve the announcement channel."""
+        channel_id = None
+        # Try common TLE DB attributes for Codeforces/logging channels safely
+        if hasattr(cf_common.user_db, 'get_cf_announcements_channel'):
+            channel_id = cf_common.user_db.get_cf_announcements_channel(guild.id)
+        elif hasattr(cf_common.user_db, 'get_logging_channel'):
+            channel_id = cf_common.user_db.get_logging_channel(guild.id)
+            
+        # Fallback to the environment variables to guarantee it works
+        if not channel_id:
+            channel_ids_str = os.environ.get("CHANNEL_IDS", os.environ.get("CHANNEL_ID"))
+            if channel_ids_str:
+                for cid in channel_ids_str.split(","):
+                    if cid.strip().isdigit() and guild.get_channel(int(cid.strip())):
+                        return int(cid.strip())
+        return channel_id
+
     def get_monthly_scores(self, guild_id, start_time, end_time):
         """Helper function to calculate scores for all users in a given monthly timeframe."""
         res = cf_common.user_db.get_cf_users_for_guild(guild_id)
@@ -248,7 +266,7 @@ class MonthlyGitgudders(commands.Cog):
         # If today is the 1st, announce the month that just ended
         if now.day == 1:
             for guild in self.bot.guilds:
-                channel_id = cf_common.user_db.get_announcement_channel(guild.id)
+                channel_id = self._get_announcement_channel(guild)
                 if not channel_id:
                     continue
                 
@@ -326,9 +344,9 @@ class MonthlyGitgudders(commands.Cog):
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def force_mgg_update(self, ctx):
         """Admin command to manually trigger the Top 3 announcement for the CURRENT month."""
-        channel_id = cf_common.user_db.get_announcement_channel(ctx.guild.id)
+        channel_id = self._get_announcement_channel(ctx.guild)
         if not channel_id:
-            await ctx.send("No announcement channel configured for this server. Use `;set_announcement_channel`.")
+            await ctx.send("No announcement channel configured for this server. Check DB settings or CHANNEL_IDS env variable.")
             return
             
         channel = ctx.guild.get_channel(channel_id)
