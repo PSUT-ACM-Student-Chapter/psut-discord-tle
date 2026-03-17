@@ -4,8 +4,8 @@ import urllib.request
 import glob
 
 def download_emoji_font():
-    # URL for the most up-to-date black & white Noto Emoji font
-    font_url = "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoEmoji-Regular.ttf"
+    # URL for the most up-to-date black & white Noto Emoji font (version-locked to avoid 404s)
+    font_url = "https://raw.githubusercontent.com/googlefonts/noto-emoji/v2.038/fonts/NotoEmoji-Regular.ttf"
     
     # TLE uses either tle/assets/fonts or data/assets/fonts depending on the version
     dirs_to_check = ['tle/assets/fonts', 'data/assets/fonts']
@@ -15,9 +15,12 @@ def download_emoji_font():
         if os.path.exists(d):
             filepath = os.path.join(d, 'NotoEmoji-Regular.ttf')
             if not os.path.exists(filepath):
-                print(f"⬇️ Downloading latest Noto Emoji to {d}...")
+                print(f"⬇️ Downloading Noto Emoji to {d}...")
                 try:
-                    urllib.request.urlretrieve(font_url, filepath)
+                    # Using Request to add a User-Agent, preventing potential 403/404 blocks
+                    req = urllib.request.Request(font_url, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req) as response, open(filepath, 'wb') as out_file:
+                        out_file.write(response.read())
                     print(f"✅ Saved to {filepath}")
                     success = True
                 except Exception as e:
@@ -73,6 +76,7 @@ def clear_matplotlib_cache():
             print(f"✅ Cleared matplotlib cache: {f}")
     except ImportError:
         print("⚠️ Matplotlib not installed in this python environment. Skipping cache clear.")
+        print("   (If emojis still don't show, try running this script inside `poetry shell`)")
     except Exception as e:
         print(f"⚠️ Could not completely clear matplotlib cache: {e}")
 
