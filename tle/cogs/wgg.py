@@ -234,7 +234,7 @@ class WeeklyGitgudders(commands.Cog):
         await channel.send(embed=embed)
         return True
 
-    @tasks.loop(time=datetime.time(hour=21, minute=0, second=0))
+    @tasks.loop(time=datetime.time(hour=0, minute=0, second=0))
     async def weekly_announcement_task(self):
         """Runs 00:00 UTC+3. On Mondays, announces the previous week."""
         now = datetime.datetime.now(datetime.timezone.utc)
