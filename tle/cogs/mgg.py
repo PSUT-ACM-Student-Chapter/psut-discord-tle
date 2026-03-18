@@ -238,7 +238,7 @@ class MonthlyGitgudders(commands.Cog):
         await channel.send(embed=embed)
         return True
 
-    @tasks.loop(time=datetime.time(hour=21, minute=0, second=0))
+    @tasks.loop(time=datetime.time(hour=0, minute=0, second=0))
     async def monthly_announcement_task(self):
         """Runs every day at 00:00 UTC+3. On the 1st, announces the previous month."""
         now = datetime.datetime.now(datetime.timezone.utc)
