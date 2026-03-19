@@ -24,6 +24,7 @@ class Startup(commands.Cog):
                 "Oh, great. The humans woke me up again. I'm back... 🙄",
                 "The source code has stabilized... I have returned! 🌌",
                 "Nap time is over! RAM cleared, ready to go! ✨",
+                "I see Sami’s 'weekly bot-slaying' ritual is complete. I'm back and only slightly traumatized!",
                 "Hello Hello people, I was restarting and taking a nap, I am back now! 💤"
             ]
 
