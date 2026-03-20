@@ -1,7 +1,7 @@
 import random
 from discord.ext import commands
 
-class Prizes(commands.Cog):
+class Misc(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
@@ -18,6 +18,11 @@ class Prizes(commands.Cog):
             # Send the response back to the channel
             await ctx.send(f"{random_years} years")
 
-# This async setup function is REQUIRED for your bot's version
+    @commands.command(brief='Randomly answer yes or no')
+    async def no(self, ctx):
+        """Replies with either "Yes" or "No" randomly."""
+        reply = random.choice(['Yes', 'No'])
+        await ctx.send(reply)
+
 async def setup(bot):
-    await bot.add_cog(Prizes(bot))
+    await bot.add_cog(Misc(bot))
