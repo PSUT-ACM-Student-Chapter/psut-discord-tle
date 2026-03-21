@@ -24,7 +24,7 @@ class EasyGame(Game):
         self.target = random.randint(1, 100000)
         self.max_queries = 20
         self.description = (
-            "I have hidden a number x between `1` and `100,000`.\n"
+            "I have hidden a number $x$ between `1` and `100,000`.\n"
             "Use `;ig q <number>` to ask if your number is `< target`, `> target`, or `= target`.\n"
             "Use `;ig g <number>` to make your final guess!"
         )
@@ -68,9 +68,9 @@ class MediumGame(Game):
         self.B = random.randint(10**7, 10**8)
         self.max_queries = 40
         self.description = (
-            "I have a hidden unimodal quadratic function f(x) with a single maximum peak at an integer P (`1 <= P <= 10,000`).\n"
-            "Use `;ig q <x>` to get the value of f(x).\n"
-            "Use `;ig g <P>` to guess the exact location of the peak P!"
+            "I have a hidden unimodal quadratic function $f(x)$ with a single maximum peak at an integer $P$ (`1 <= P <= 10,000`).\n"
+            "Use `;ig q <x>` to get the value of $f(x)$.\n"
+            "Use `;ig g <P>` to guess the exact location of the peak $P$!"
         )
 
     def query(self, *args):
@@ -98,6 +98,49 @@ class MediumGame(Game):
         else:
             return False, f"💀 **Wrong!** The peak was at $P = {self.P}$."
 
+class Medium2Game(Game):
+    """Guess the Array (CF 727C)"""
+    def __init__(self):
+        super().__init__()
+        self.name = "Guess the Array (Addition)"
+        self.arr = [random.randint(1, 100) for _ in range(5)]
+        self.max_queries = 5
+        self.description = (
+            "I have a hidden array of 5 integers (each between `1` and `100`).\n"
+            "Use `;ig q <i> <j>` to query the sum of the elements at indices $i$ and $j$ (1-indexed, $i \\neq j$, `1 <= i, j <= 5`).\n"
+            "You have exactly **5 queries**.\n"
+            "Use `;ig g <n1> <n2> <n3> <n4> <n5>` to guess the full array."
+        )
+
+    def query(self, *args):
+        if len(args) != 2:
+            return "❌ Please provide exactly two indices: `;ig q <i> <j>`"
+        try:
+            i, j = int(args[0]), int(args[1])
+            if not (1 <= i <= 5 and 1 <= j <= 5):
+                return "❌ Indices must be between 1 and 5."
+            if i == j:
+                return "❌ Indices must be distinct."
+        except ValueError:
+            return "❌ Invalid numbers."
+        
+        self.queries_used += 1
+        res = self.arr[i-1] + self.arr[j-1]
+        return f"The sum $A_{{{i}}} + A_{{{j}}}$ is **{res}**."
+
+    def guess(self, *args):
+        if len(args) != 5:
+            return False, "❌ Please provide exactly five numbers: `;ig g <n1> ... <n5>`"
+        try:
+            guessed_arr = [int(x) for x in args]
+        except ValueError:
+            return False, "❌ Invalid numbers."
+
+        if guessed_arr == self.arr:
+            return True, f"🎉 **Correct!** The array was `{self.arr}`."
+        else:
+            return False, f"💀 **Wrong!** The correct array was `{self.arr}`."
+
 class HardGame(Game):
     """Lost Numbers (Codeforces 1167B)"""
     def __init__(self):
@@ -108,7 +151,7 @@ class HardGame(Game):
         self.max_queries = 4
         self.description = (
             "I have a hidden array of length 6. It is a permutation of `[4, 8, 15, 16, 23, 42]`.\n"
-            "Use `;ig q <i> <j>` to query the product of the elements at indices i and j (1-indexed, `1 <= i, j <= 6`).\n"
+            "Use `;ig q <i> <j>` to query the product of the elements at indices $i$ and $j$ (1-indexed, `1 <= i, j <= 6`).\n"
             "You only have **4 queries**.\n"
             "Use `;ig g <n1> <n2> <n3> <n4> <n5> <n6>` to guess the full array."
         )
@@ -140,6 +183,58 @@ class HardGame(Game):
         else:
             return False, f"💀 **Wrong!** The correct array was `{self.arr}`."
 
+class Hard2Game(Game):
+    """Bitwise Queries (CF 1451E1)"""
+    def __init__(self):
+        super().__init__()
+        self.name = "Bitwise Enigma"
+        self.arr = [0, 1, 2, 3]
+        random.shuffle(self.arr)
+        self.max_queries = 5
+        self.description = (
+            "I have a hidden array of length 4. It is a permutation of `[0, 1, 2, 3]`.\n"
+            "Use `;ig q <OP> <i> <j>` to query the bitwise operation `OP` (can be `AND`, `OR`, `XOR`) between indices $i$ and $j$ (1-indexed, $i \\neq j$, `1 <= i, j <= 4`).\n"
+            "Example: `;ig q XOR 1 2`\n"
+            "You have exactly **5 queries**.\n"
+            "Use `;ig g <n1> <n2> <n3> <n4>` to guess the full array."
+        )
+
+    def query(self, *args):
+        if len(args) != 3:
+            return "❌ Format: `;ig q <AND|OR|XOR> <i> <j>`"
+        op = args[0].upper()
+        if op not in ['AND', 'OR', 'XOR']:
+            return "❌ Operation must be AND, OR, or XOR."
+        try:
+            i, j = int(args[1]), int(args[2])
+            if not (1 <= i <= 4 and 1 <= j <= 4):
+                return "❌ Indices must be between 1 and 4."
+            if i == j:
+                return "❌ Indices must be distinct."
+        except ValueError:
+            return "❌ Invalid numbers."
+
+        self.queries_used += 1
+        val1, val2 = self.arr[i-1], self.arr[j-1]
+        
+        if op == 'AND': res = val1 & val2
+        elif op == 'OR': res = val1 | val2
+        elif op == 'XOR': res = val1 ^ val2
+
+        return f"The result of $A_{{{i}}}$ **{op}** $A_{{{j}}}$ is **{res}**."
+
+    def guess(self, *args):
+        if len(args) != 4:
+            return False, "❌ Please provide exactly four numbers: `;ig g <n1> <n2> <n3> <n4>`"
+        try:
+            guessed_arr = [int(x) for x in args]
+        except ValueError:
+            return False, "❌ Invalid numbers."
+
+        if guessed_arr == self.arr:
+            return True, f"🎉 **Correct!** The array was `{self.arr}`."
+        else:
+            return False, f"💀 **Wrong!** The correct array was `{self.arr}`."
 
 class InteractiveGames(commands.Cog):
     def __init__(self, bot):
@@ -161,12 +256,20 @@ class InteractiveGames(commands.Cog):
             await ctx.send(f"{ctx.author.mention}, you already have an active game in this channel! Use `;ig quit` to stop it.")
             return
 
-        if difficulty == "easy":
+        if difficulty in ["easy", "easy1"]:
             game = EasyGame()
-        elif difficulty == "medium":
+        elif difficulty == "medium1":
             game = MediumGame()
-        elif difficulty == "hard":
+        elif difficulty == "medium2":
+            game = Medium2Game()
+        elif difficulty == "medium":
+            game = random.choice([MediumGame(), Medium2Game()])
+        elif difficulty == "hard1":
             game = HardGame()
+        elif difficulty == "hard2":
+            game = Hard2Game()
+        elif difficulty == "hard":
+            game = random.choice([HardGame(), Hard2Game()])
         else:
             await ctx.send("❌ Unknown difficulty. Please choose `easy`, `medium`, or `hard`.")
             return
