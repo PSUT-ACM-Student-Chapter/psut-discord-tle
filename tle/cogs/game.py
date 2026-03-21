@@ -24,7 +24,7 @@ class EasyGame(Game):
         self.target = random.randint(1, 100000)
         self.max_queries = 20
         self.description = (
-            "I have hidden a number $x$ between `1` and `100,000`.\n"
+            "I have hidden a number x between `1` and `100,000`.\n"
             "Use `;ig q <number>` to ask if your number is `< target`, `> target`, or `= target`.\n"
             "Use `;ig g <number>` to make your final guess!"
         )
@@ -68,9 +68,9 @@ class MediumGame(Game):
         self.B = random.randint(10**7, 10**8)
         self.max_queries = 40
         self.description = (
-            "I have a hidden unimodal quadratic function $f(x)$ with a single maximum peak at an integer $P$ (`1 <= P <= 10,000`).\n"
-            "Use `;ig q <x>` to get the value of $f(x)$.\n"
-            "Use `;ig g <P>` to guess the exact location of the peak $P$!"
+            "I have a hidden unimodal quadratic function f(x) with a single maximum peak at an integer P (`1 <= P <= 10,000`).\n"
+            "Use `;ig q <x>` to get the value of f(x).\n"
+            "Use `;ig g <P>` to guess the exact location of the peak P!"
         )
 
     def query(self, *args):
@@ -108,7 +108,7 @@ class HardGame(Game):
         self.max_queries = 4
         self.description = (
             "I have a hidden array of length 6. It is a permutation of `[4, 8, 15, 16, 23, 42]`.\n"
-            "Use `;ig q <i> <j>` to query the product of the elements at indices $i$ and $j$ (1-indexed, `1 <= i, j <= 6`).\n"
+            "Use `;ig q <i> <j>` to query the product of the elements at indices i and j (1-indexed, `1 <= i, j <= 6`).\n"
             "You only have **4 queries**.\n"
             "Use `;ig g <n1> <n2> <n3> <n4> <n5> <n6>` to guess the full array."
         )
