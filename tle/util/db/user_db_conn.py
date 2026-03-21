@@ -487,7 +487,7 @@ class UserDbConn:
                  '(user_id, guild_id, handle, active) '
                  'VALUES (?, ?, ?, 1)')
         with self.conn:
-            return self.conn.execute(query, (user_id, guild_id, handle)).rowcount
+            return self.conn.execute(query, (user_id, 'GLOBAL', handle)).rowcount
 
     def set_inactive(self, guild_id_user_id_pairs):
         query = ('UPDATE user_handle '
@@ -500,7 +500,7 @@ class UserDbConn:
         query = ('SELECT handle '
                  'FROM user_handle '
                  'WHERE user_id = ? AND guild_id = ?')
-        res = self.conn.execute(query, (user_id, guild_id)).fetchone()
+        res = self.conn.execute(query, (user_id, 'GLOBAL')).fetchone()
         return res[0] if res else None
 
     def get_user_id(self, handle, guild_id):
@@ -514,13 +514,13 @@ class UserDbConn:
         query = ('DELETE FROM user_handle '
                  'WHERE UPPER(handle) = UPPER(?) AND guild_id = ?')
         with self.conn:
-            return self.conn.execute(query, (handle, guild_id)).rowcount
+            return self.conn.execute(query, (handle, 'GLOBAL')).rowcount
 
     def get_handles_for_guild(self, guild_id):
         query = ('SELECT user_id, handle '
                  'FROM user_handle '
                  'WHERE guild_id = ? AND active = 1')
-        res = self.conn.execute(query, (guild_id,)).fetchall()
+        res = self.conn.execute(query, ('GLOBAL',)).fetchall()
         return [(int(user_id), handle) for user_id, handle in res]
 
     def get_cf_users_for_guild(self, guild_id):
@@ -531,7 +531,7 @@ class UserDbConn:
                  'LEFT JOIN cf_user_cache AS c '
                  'ON u.handle = c.handle '
                  'WHERE u.guild_id = ? AND u.active = 1')
-        res = self.conn.execute(query, (guild_id,)).fetchall()
+        res = self.conn.execute(query, ('GLOBAL',)).fetchall()
         return [(int(t[0]), cf.User._make(t[1:])) for t in res]
 
     def get_reminder_settings(self, guild_id):
