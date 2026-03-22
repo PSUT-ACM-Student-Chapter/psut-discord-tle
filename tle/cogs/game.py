@@ -58,6 +58,48 @@ class EasyGame(Game):
         else:
             return False, f"💀 **Wrong!** The hidden number was {self.target}."
 
+class Easy2Game(Game):
+    """Find the Treasure (Manhattan Distance)"""
+    def __init__(self):
+        super().__init__()
+        self.name = "Find the Treasure (Manhattan Distance)"
+        self.X = random.randint(1, 1000)
+        self.Y = random.randint(1, 1000)
+        self.max_queries = 15
+        self.description = (
+            "I have hidden a treasure at coordinates $(X, Y)$ on a grid where `1 <= X, Y <= 1000`.\n"
+            "Use `;ig q <x> <y>` to query a coordinate. I will return the **Manhattan Distance** $(|x - X| + |y - Y|)$ to the treasure.\n"
+            "You have exactly **15 queries**.\n"
+            "Use `;ig g <x> <y>` to guess the exact location of the treasure!"
+        )
+
+    def query(self, *args):
+        if len(args) != 2:
+            return "❌ Please provide exactly two numbers: `;ig q <x> <y>`"
+        try:
+            x, y = int(args[0]), int(args[1])
+            if not (1 <= x <= 1000 and 1 <= y <= 1000):
+                return "❌ Coordinates must be between 1 and 1000."
+        except ValueError:
+            return "❌ Invalid numbers."
+        
+        self.queries_used += 1
+        distance = abs(x - self.X) + abs(y - self.Y)
+        return f"The Manhattan distance from `({x}, {y})` to the treasure is **{distance}**."
+
+    def guess(self, *args):
+        if len(args) != 2:
+            return False, "❌ Please provide exactly two numbers: `;ig g <x> <y>`"
+        try:
+            x, y = int(args[0]), int(args[1])
+        except ValueError:
+            return False, "❌ Invalid numbers."
+
+        if x == self.X and y == self.Y:
+            return True, f"🎉 **Correct!** The treasure was at `({self.X}, {self.Y})`."
+        else:
+            return False, f"💀 **Wrong!** The treasure was at `({self.X}, {self.Y})`."
+
 class MediumGame(Game):
     """Find the Peak (Ternary Search)"""
     def __init__(self):
@@ -256,8 +298,12 @@ class InteractiveGames(commands.Cog):
             await ctx.send(f"{ctx.author.mention}, you already have an active game in this channel! Use `;ig quit` to stop it.")
             return
 
-        if difficulty in ["easy", "easy1"]:
+        if difficulty == "easy1":
             game = EasyGame()
+        elif difficulty == "easy2":
+            game = Easy2Game()
+        elif difficulty == "easy":
+            game = random.choice([EasyGame(), Easy2Game()])
         elif difficulty == "medium1":
             game = MediumGame()
         elif difficulty == "medium2":
