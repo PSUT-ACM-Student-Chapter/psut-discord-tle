@@ -132,7 +132,7 @@ async def main():
     bot.add_check(no_dm_check)
     
     # Restrict bot usage to specific channels if CHANNEL_IDS is set.
-    # bot.add_check(channel_check)
+     bot.add_check(channel_check)
 
     # cf_common.initialize needs to run first, so it must be set as the bot's
     # on_ready event handler rather than an on_ready listener.
