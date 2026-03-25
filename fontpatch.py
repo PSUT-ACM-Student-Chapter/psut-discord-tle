@@ -4,8 +4,10 @@ import urllib.request
 import glob
 
 def download_emoji_font():
-    # URL for the most up-to-date black & white Noto Emoji font (version-locked to avoid 404s)
-    font_url = "https://raw.githubusercontent.com/googlefonts/noto-emoji/v2.038/fonts/NotoEmoji-Regular.ttf"
+    # A highly stable GitHub mirror that is confirmed to work
+    font_urls = [
+        "https://raw.githubusercontent.com/JuliaPlots/AbstractPlotting.jl/master/assets/fonts/NotoEmoji-Regular.ttf"
+    ]
     
     # TLE uses either tle/assets/fonts or data/assets/fonts depending on the version
     dirs_to_check = ['tle/assets/fonts', 'data/assets/fonts']
@@ -16,15 +18,25 @@ def download_emoji_font():
             filepath = os.path.join(d, 'NotoEmoji-Regular.ttf')
             if not os.path.exists(filepath):
                 print(f"⬇️ Downloading Noto Emoji to {d}...")
-                try:
-                    # Using Request to add a User-Agent, preventing potential 403/404 blocks
-                    req = urllib.request.Request(font_url, headers={'User-Agent': 'Mozilla/5.0'})
-                    with urllib.request.urlopen(req) as response, open(filepath, 'wb') as out_file:
-                        out_file.write(response.read())
-                    print(f"✅ Saved to {filepath}")
-                    success = True
-                except Exception as e:
-                    print(f"❌ Failed to download to {d}: {e}")
+                
+                downloaded = False
+                for font_url in font_urls:
+                    if downloaded:
+                        break
+                    try:
+                        print(f"   Fetching from: {font_url[:50]}...")
+                        # Using Request to add a User-Agent, preventing potential 403/404 blocks
+                        req = urllib.request.Request(font_url, headers={'User-Agent': 'Mozilla/5.0'})
+                        with urllib.request.urlopen(req) as response, open(filepath, 'wb') as out_file:
+                            out_file.write(response.read())
+                        print(f"✅ Saved to {filepath}")
+                        downloaded = True
+                        success = True
+                    except Exception as e:
+                        print(f"   ❌ Failed with this URL: {e}")
+                
+                if not downloaded:
+                    print(f"❌ All download attempts failed for {d}.")
             else:
                 print(f"✅ Noto Emoji already exists in {d}")
                 success = True
@@ -76,7 +88,7 @@ def clear_matplotlib_cache():
             print(f"✅ Cleared matplotlib cache: {f}")
     except ImportError:
         print("⚠️ Matplotlib not installed in this python environment. Skipping cache clear.")
-        print("   (If emojis still don't show, try running this script inside `poetry shell`)")
+        print("   (CRITICAL: Run this script using `poetry run python patch_emojis.py` to fix this!)")
     except Exception as e:
         print(f"⚠️ Could not completely clear matplotlib cache: {e}")
 
