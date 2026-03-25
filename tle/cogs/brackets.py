@@ -42,11 +42,9 @@ class Brackets(commands.Cog):
     # --- DUEL TRACKING LISTENER ---
     
     @commands.Cog.listener()
-    async def on_duel_complete(self, winner_id: int, loser_id: int):
+    async def on_duel_complete(self, duel_type, winner_id: int, loser_id: int):
         """
-        Listens for a custom 'duel_complete' event. 
-        Note: You must add `self.bot.dispatch("duel_complete", winner.id, loser.id)` 
-        to your tle/cogs/duel.py when a duel resolves.
+        Listens for the custom 'duel_complete' event from tle/cogs/duel.py.
         """
         for name, t in self.tournaments.items():
             if t['state'] != 'active':
@@ -70,7 +68,7 @@ class Brackets(commands.Cog):
                     self.save_data()
             
             elif match_id_to_resolve is not None:
-                # Process the win
+                # Process the win silently in the background
                 await self.process_win(name, t, match_id_to_resolve, winner_id)
 
     # --- MATCH PROCESSING LOGIC ---
@@ -100,11 +98,6 @@ class Brackets(commands.Cog):
                 t['state'] = 'finished'
 
         self.save_data()
-        
-        # We need a channel to announce. We'll rely on a specific channel ID if stored, 
-        # or we skip automatic pinging here unless triggered by a command. 
-        # (Assuming the event listener runs silently in background and statuses are checked manually, 
-        # or you can broadcast to a default channel here).
 
     def advance_single_elim(self, t, match_id, winner_id):
         """Advances a winner up the single elimination tree."""
@@ -300,7 +293,7 @@ class Brackets(commands.Cog):
     async def bracket(self, ctx):
         await ctx.send_help(ctx.command)
 
-    @bracket.command(brief='Create a new bracket')
+    @bracket.command(brief='Create a new bracket. Types: single_elimination, double_elimination, point_system, round_robin, swiss')
     async def create(self, ctx, name: str, b_type: str = 'single_elimination', *managers: discord.Member):
         if name in self.tournaments:
             return await ctx.send(f"❌ Bracket `{name}` already exists!")
@@ -318,7 +311,17 @@ class Brackets(commands.Cog):
             'matches': {}
         }
         self.save_data()
-        await ctx.send(f"✅ Created {b_type.replace('_', ' ')} bracket `{name}`. Type `;bracket register {name}` to join!")
+        await ctx.send(f"✅ Created {b_type.replace('_', ' ')} bracket `{name}`. Type `;bracket register \"{name}\"` to join!")
+
+    @bracket.command(brief='Delete a bracket entirely')
+    async def delete(self, ctx, name: str):
+        t = self.tournaments.get(name)
+        if not t: return await ctx.send("❌ Bracket not found.")
+        if not self.is_manager(ctx, t): return await ctx.send("❌ Only managers can delete the bracket.")
+        
+        del self.tournaments[name]
+        self.save_data()
+        await ctx.send(f"🗑️ Successfully deleted the bracket `{name}`.")
 
     @bracket.command(brief='Register for a bracket')
     async def register(self, ctx, name: str):
