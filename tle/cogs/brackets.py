@@ -11,8 +11,17 @@ from PIL import Image, ImageDraw, ImageFont
 
 DATA_FILE = "data/brackets.json"
 VALID_TYPES = ['single_elimination', 'double_elimination', 'point_system', 'round_robin', 'swiss']
+TYPE_MAP = {
+    '1': 'single_elimination',
+    '2': 'double_elimination',
+    '3': 'point_system',
+    '4': 'round_robin',
+    '5': 'swiss'
+}
 
 class Brackets(commands.Cog):
+    """Tournament and Bracket management system."""
+    
     def __init__(self, bot):
         self.bot = bot
         self.tournaments = {}
@@ -291,15 +300,37 @@ class Brackets(commands.Cog):
 
     @commands.group(brief='Tournament bracket commands', invoke_without_command=True)
     async def bracket(self, ctx):
+        """
+        Main command group for managing tournaments and brackets.
+        
+        Use `;help bracket <subcommand>` for more info on a specific command.
+        """
         await ctx.send_help(ctx.command)
 
-    @bracket.command(brief='Create a new bracket. Types: single_elimination, double_elimination, point_system, round_robin, swiss')
+    @bracket.command(brief='Create a new bracket.')
     async def create(self, ctx, name: str, b_type: str = 'single_elimination', *managers: discord.Member):
+        """
+        Creates a new tournament bracket.
+        
+        <name>: The name of the bracket (use quotes if it contains spaces).
+        <b_type>: The type of the tournament.
+                  Valid options: 
+                  1 or single_elimination
+                  2 or double_elimination
+                  3 or point_system
+                  4 or round_robin
+                  5 or swiss
+        [managers]: (Optional) Mention users to give them admin rights over the bracket.
+        """
         if name in self.tournaments:
             return await ctx.send(f"❌ Bracket `{name}` already exists!")
         
+        # Map number shortcuts to the full name
+        if b_type in TYPE_MAP:
+            b_type = TYPE_MAP[b_type]
+            
         if b_type not in VALID_TYPES:
-            return await ctx.send(f"❌ Invalid type. Valid types: {', '.join(VALID_TYPES)}")
+            return await ctx.send("❌ Invalid type. Valid types/numbers:\n`1` Single Elim\n`2` Double Elim\n`3` Point System\n`4` Round Robin\n`5` Swiss")
             
         manager_ids = [ctx.author.id] + [m.id for m in managers]
         self.tournaments[name] = {
@@ -313,8 +344,37 @@ class Brackets(commands.Cog):
         self.save_data()
         await ctx.send(f"✅ Created {b_type.replace('_', ' ')} bracket `{name}`. Type `;bracket register \"{name}\"` to join!")
 
-    @bracket.command(brief='Delete a bracket entirely')
+    @bracket.command(brief='List all brackets and their status.')
+    async def list(self, ctx):
+        """
+        Shows a list of all existing brackets, their types, and whether they are finished.
+        """
+        if not self.tournaments:
+            return await ctx.send("No brackets currently exist. Create one with `;bracket create`!")
+
+        embed = discord.Embed(title="🏆 Tournament Brackets", color=0x7289da)
+        for name, t in self.tournaments.items():
+            b_type = t.get('type', 'Unknown').replace('_', ' ').title()
+            state = t.get('state', 'Unknown').capitalize()
+            players_count = len(t.get('players', []))
+            
+            status_emoji = "🟢" if state.lower() == "active" else "🔴" if state.lower() == "finished" else "🟡"
+            
+            embed.add_field(
+                name=f"{status_emoji} {name}", 
+                value=f"**Type:** {b_type} | **Status:** {state} | **Players:** {players_count}", 
+                inline=False
+            )
+        
+        await ctx.send(embed=embed)
+
+    @bracket.command(brief='Delete a bracket entirely.')
     async def delete(self, ctx, name: str):
+        """
+        Deletes an existing bracket.
+        
+        Requires you to be a server administrator or a designated manager for this bracket.
+        """
         t = self.tournaments.get(name)
         if not t: return await ctx.send("❌ Bracket not found.")
         if not self.is_manager(ctx, t): return await ctx.send("❌ Only managers can delete the bracket.")
@@ -323,8 +383,43 @@ class Brackets(commands.Cog):
         self.save_data()
         await ctx.send(f"🗑️ Successfully deleted the bracket `{name}`.")
 
-    @bracket.command(brief='Register for a bracket')
+    @bracket.command(brief='Add new managers to an existing bracket.')
+    async def addmanager(self, ctx, name: str, *new_managers: discord.Member):
+        """
+        Adds new managers to a bracket.
+        
+        <name>: The name of the bracket (use quotes if it contains spaces).
+        [new_managers...]: Mention the users you want to add as managers.
+        """
+        t = self.tournaments.get(name)
+        if not t: return await ctx.send("❌ Bracket not found.")
+        if not self.is_manager(ctx, t): return await ctx.send("❌ Only existing managers can add new managers.")
+        
+        if not new_managers:
+            return await ctx.send("❌ You must mention at least one user to add as a manager.")
+
+        current_managers = set(t['managers'])
+        added_managers = []
+        for m in new_managers:
+            if m.id not in current_managers:
+                current_managers.add(m.id)
+                added_managers.append(m.display_name)
+        
+        t['managers'] = list(current_managers)
+        self.save_data()
+        
+        if added_managers:
+            await ctx.send(f"✅ Added **{', '.join(added_managers)}** as manager(s) for `{name}`.")
+        else:
+            await ctx.send("⚠️ All mentioned users are already managers.")
+
+    @bracket.command(brief='Register for a bracket.')
     async def register(self, ctx, name: str):
+        """
+        Registers you for an upcoming bracket.
+        
+        The bracket must be in the 'registering' state (not yet started).
+        """
         t = self.tournaments.get(name)
         if not t: return await ctx.send("❌ Bracket not found.")
         if t['state'] != 'registering': return await ctx.send("❌ Registration is closed.")
@@ -334,8 +429,14 @@ class Brackets(commands.Cog):
         self.save_data()
         await ctx.send(f"✅ Registered **{ctx.author.display_name}** for `{name}`. Total players: {len(t['players'])}")
 
-    @bracket.command(brief='Unregister a user from a bracket')
+    @bracket.command(brief='Unregister a user from a bracket.')
     async def unregister(self, ctx, name: str, user: discord.Member = None):
+        """
+        Removes a user from a bracket.
+        
+        You can use this to remove yourself.
+        Managers can mention another [user] to remove them forcefully.
+        """
         t = self.tournaments.get(name)
         if not t: return await ctx.send("❌ Bracket not found.")
         
@@ -350,8 +451,15 @@ class Brackets(commands.Cog):
         else:
             await ctx.send("❌ User not found in bracket.")
 
-    @bracket.command(brief='Starts the bracket')
+    @bracket.command(brief='Starts the bracket.')
     async def start(self, ctx, name: str):
+        """
+        Closes registration and starts the bracket.
+        
+        Requires you to be a bracket manager. 
+        Depending on the bracket type, this will randomize seeds, 
+        generate matches, pad with BYEs, and announce the first round!
+        """
         t = self.tournaments.get(name)
         if not t: return await ctx.send("❌ Bracket not found.")
         if not self.is_manager(ctx, t): return await ctx.send("❌ Only managers can start the bracket.")
@@ -404,8 +512,15 @@ class Brackets(commands.Cog):
         if active_matches:
             await self.announce_matches(ctx, t, active_matches)
 
-    @bracket.command(brief='Manually report the winner of a match')
+    @bracket.command(brief='Manually report the winner of a match.')
     async def report(self, ctx, name: str, winner: discord.Member):
+        """
+        Manually forces a win for a specific player.
+        
+        Requires you to be a manager. It will automatically find 
+        the active pending match for that player and advance them.
+        *Note: Standard TLE duels will automatically report scores!*
+        """
         t = self.tournaments.get(name)
         if not t: return await ctx.send("❌ Bracket not found.")
         if not self.is_manager(ctx, t): return await ctx.send("❌ Only managers can manually report scores.")
@@ -439,8 +554,14 @@ class Brackets(commands.Cog):
         if t['state'] == 'finished':
             await ctx.send(f"🎉 **TOURNAMENT FINISHED!** 🎉")
 
-    @bracket.command(brief='Show current bracket image or leaderboard')
+    @bracket.command(brief='Show current bracket image or leaderboard.')
     async def status(self, ctx, name: str):
+        """
+        Displays the current status of the bracket.
+        
+        Generates a visual bracket tree for Single Elimination, 
+        or an embedded leaderboard/standings page for other types.
+        """
         t = self.tournaments.get(name)
         if not t: return await ctx.send("❌ Bracket not found.")
         if t['state'] == 'registering':
