@@ -418,7 +418,7 @@ class Brackets(commands.Cog):
         for mid in match_ids:
             match = t['matches'][str(mid)]
             if match.get('p1') not in (None, 'BYE') and match.get('p2') not in (None, 'BYE'):
-                await ctx_or_channel.send(f"⚔️ **Match Time!** <@{match['p1']}> 🆚 <@{match['p2']}>\n*Managers can report the winner using `;bracket report "{t['name']}" @winner` or complete a TLE duel!*")
+                await ctx_or_channel.send(f'⚔️ **Match Time!** <@{match["p1"]}> 🆚 <@{match["p2"]}>\n*Managers can report the winner using `;bracket report "{t["name"]}" @winner` or complete a TLE duel!*')
 
     # --- DISCORD COMMANDS ---
 
