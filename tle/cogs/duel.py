@@ -87,6 +87,10 @@ def complete_duel(duelid, guild_id, win_status, winner, loser, finish_time, scor
     delta = round(elo_delta(winner_r, loser_r, score))
     rc = cf_common.user_db.complete_duel(
         duelid, guild_id, win_status, finish_time, winner.id, loser.id, delta, dtype)
+    if win_status != Winner.DRAW:
+            winner_id = duel.challenger_id if win_status == Winner.CHALLENGER else duel.challengee_id
+            loser_id = duel.challengee_id if win_status == Winner.CHALLENGER else duel.challenger_id
+            self.bot.dispatch("duel_complete", winner_id, loser_id)
     if rc == 0:
         raise DuelCogError('Hey! No cheating!')
 
