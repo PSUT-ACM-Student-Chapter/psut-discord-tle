@@ -136,6 +136,15 @@ class Brackets(commands.Cog):
 
     def generate_next_round(self, t):
         """Generates the next round for Swiss or Double Elimination."""
+        
+        # Check if Swiss reached its max rounds based on player count
+        if t['type'] == 'swiss':
+            # e.g., 8 players = 3 rounds, 16 players = 4 rounds
+            max_rounds = max(1, math.ceil(math.log2(len(t['players']))))
+            if t.get('current_round', 0) >= max_rounds:
+                t['state'] = 'finished'
+                return []
+
         t['current_round'] = t.get('current_round', 0) + 1
         active_players = []
         
