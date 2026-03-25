@@ -54,6 +54,7 @@ class Brackets(commands.Cog):
     async def on_duel_complete(self, duel_type, winner_id: int, loser_id: int):
         """
         Listens for the custom 'duel_complete' event from tle/cogs/duel.py.
+        Updates the brackets and automatically announces the result visually.
         """
         for name, t in self.tournaments.items():
             if t['state'] != 'active':
@@ -69,16 +70,32 @@ class Brackets(commands.Cog):
                         match_id_to_resolve = mid
                         break
             
+            channel_id = t.get('channel_id')
+            channel = self.bot.get_channel(channel_id) if channel_id else None
+
             # Point system doesn't need predefined matches, just general tracking
             if t['type'] == 'point_system':
                 if winner_id in t['players'] and loser_id in t['players']:
                     t.setdefault('scores', {})
                     t['scores'][str(winner_id)] = t['scores'].get(str(winner_id), 0) + 1
                     self.save_data()
+                    
+                    if channel:
+                        await channel.send(f"⚔️ **{name} Update!** <@{winner_id}> won a duel against <@{loser_id}> and earned 1 point!")
+                        await self.send_status_image(channel, name, t)
             
             elif match_id_to_resolve is not None:
-                # Process the win silently in the background
-                await self.process_win(name, t, match_id_to_resolve, winner_id)
+                # Process the win and get any unlocked matches
+                new_matches = await self.process_win(name, t, match_id_to_resolve, winner_id)
+                
+                if channel:
+                    await channel.send(f"⚔️ **{name} Update!** <@{winner_id}> defeated <@{loser_id}>!")
+                    await self.send_status_image(channel, name, t)
+                    
+                    if t['state'] == 'finished':
+                        await channel.send(f"🎉 **TOURNAMENT FINISHED!** 🎉")
+                    elif new_matches:
+                        await self.announce_matches(channel, t, new_matches)
 
     # --- MATCH PROCESSING LOGIC ---
 
@@ -107,6 +124,7 @@ class Brackets(commands.Cog):
                 t['state'] = 'finished'
 
         self.save_data()
+        return new_matches
 
     def advance_single_elim(self, t, match_id, winner_id):
         """Advances a winner up the single elimination tree."""
@@ -185,8 +203,29 @@ class Brackets(commands.Cog):
 
     # --- VISUALS & FORMATTING ---
 
-    def generate_bracket_image(self, t):
-        """Uses Pillow to draw the single elimination bracket graph."""
+    async def get_image_buffer(self, t):
+        """Asynchronously pre-fetches names and builds the tournament image."""
+        names = {}
+        for p in t.get('players', []):
+            user = self.bot.get_user(int(p))
+            if not user:
+                try:
+                    user = await self.bot.fetch_user(int(p))
+                except discord.NotFound:
+                    pass
+            names[str(p)] = user.display_name if user else f"User {p}"
+        
+        names["BYE"] = "BYE"
+
+        if t['type'] == 'single_elimination':
+            buffer = await self.bot.loop.run_in_executor(None, self.generate_bracket_image, t, names)
+        else:
+            buffer = await self.bot.loop.run_in_executor(None, self.generate_leaderboard_image, t, names)
+            
+        return buffer
+
+    def generate_bracket_image(self, t, names):
+        """Uses Pillow to draw the single elimination bracket tree."""
         BOX_WIDTH = 220
         BOX_HEIGHT = 60
         COL_SPACING = 300
@@ -241,9 +280,7 @@ class Brackets(commands.Cog):
 
             def get_name(user_id):
                 if user_id is None: return "TBD"
-                if user_id == "BYE": return "BYE"
-                user = self.bot.get_user(user_id)
-                return user.display_name if user else f"User {user_id}"
+                return names.get(str(user_id), f"User {user_id}")
 
             p1_name = get_name(match.get('p1'))
             p2_name = get_name(match.get('p2'))
@@ -263,47 +300,125 @@ class Brackets(commands.Cog):
         buffer.seek(0)
         return buffer
 
-    def generate_leaderboard_embed(self, t):
-        """Generates a text-based embed leaderboard for point/round-robin/swiss formats."""
-        embed = discord.Embed(title=f"Tournament: {t['name']} ({t['type'].replace('_', ' ').title()})", color=0x7289da)
-        embed.description = f"**State:** {t['state'].upper()}"
+    def generate_leaderboard_image(self, t, names):
+        """Uses Pillow to draw a beautiful visual leaderboard for non-elimination types."""
+        b_type = t['type']
+        scores = t.get('scores', {})
         
-        if t['type'] == 'point_system' or t['type'] == 'round_robin':
-            scores = t.get('scores', {})
+        # Sort players logically
+        if b_type in ['point_system', 'round_robin']:
             sorted_players = sorted(t['players'], key=lambda p: scores.get(str(p), 0), reverse=True)
-            board = ""
-            for i, p in enumerate(sorted_players, 1):
-                board += f"**{i}.** <@{p}> — {scores.get(str(p), 0)} pts\n"
-            embed.add_field(name="Standings", value=board or "No matches yet.")
-
-        elif t['type'] in ['swiss', 'double_elimination']:
-            scores = t.get('scores', {})
-            # Sort by wins, then fewest losses
+        else:
             sorted_players = sorted(t['players'], key=lambda p: (scores.get(str(p), {}).get('wins', 0), -scores.get(str(p), {}).get('losses', 0)), reverse=True)
-            board = ""
-            for i, p in enumerate(sorted_players, 1):
-                stats = scores.get(str(p), {'wins': 0, 'losses': 0})
-                board += f"**{i}.** <@{p}> — {stats['wins']} W / {stats['losses']} L\n"
-            embed.add_field(name="Standings", value=board or "No matches yet.", inline=False)
+
+        # Collect Pending matches
+        current_round = t.get('current_round')
+        pending_matches = []
+        for mid, m in t.get('matches', {}).items():
+            if m.get('winner') is None:
+                if current_round and m.get('round') != current_round:
+                    continue
+                pending_matches.append(m)
+
+        # Dimension Constants
+        row_height = 45
+        header_height = 80
+        margin = 30
+        num_players = len(sorted_players)
+        matches_height = (len(pending_matches) + 1) * row_height if pending_matches else 0
+
+        img_width = 850
+        img_height = header_height + (num_players + 2) * row_height + matches_height + margin * 2
+
+        image = Image.new('RGB', (img_width, img_height), (44, 47, 51))
+        draw = ImageDraw.Draw(image)
+
+        # Fonts Setup
+        font_path = os.path.join('tle', 'assets', 'fonts', 'NotoSans-Bold.ttf')
+        try:
+            title_font = ImageFont.truetype(font_path, 28)
+            header_font = ImageFont.truetype(font_path, 20)
+            font = ImageFont.truetype(font_path, 18)
+        except IOError:
+            title_font = ImageFont.load_default()
+            header_font = ImageFont.load_default()
+            font = ImageFont.load_default()
+
+        # 1. Header Area
+        draw.rectangle([0, 0, img_width, header_height], fill=(114, 137, 218))
+        draw.text((margin, 22), f"{t['name']} — {b_type.replace('_', ' ').title()}", fill=(255, 255, 255), font=title_font)
+
+        # 2. Table Headers
+        y_offset = header_height + margin
+        draw.text((margin, y_offset), "Rank", fill=(153, 170, 181), font=header_font)
+        draw.text((margin + 120, y_offset), "Player", fill=(153, 170, 181), font=header_font)
+        draw.text((margin + 550, y_offset), "Score / Record", fill=(153, 170, 181), font=header_font)
+        if b_type == 'double_elimination':
+            draw.text((margin + 720, y_offset), "Status", fill=(153, 170, 181), font=header_font)
+
+        y_offset += row_height
+
+        # 3. Player Rows
+        for i, p in enumerate(sorted_players, 1):
+            bg_color = (35, 39, 42) if i % 2 == 0 else (44, 47, 51)
+            draw.rectangle([margin, y_offset, img_width - margin, y_offset + row_height], fill=bg_color)
+
+            name_str = names.get(str(p), f"User {p}")
             
-            # Show current round matches
-            current_round = t.get('current_round', 1)
-            matches_text = ""
-            for m in t.get('matches', {}).values():
-                if m.get('round') == current_round:
-                    w_text = f"(Winner: <@{m['winner']}>)" if m.get('winner') else "[Pending]"
-                    matches_text += f"<@{m['p1']}> vs <@{m['p2']}> {w_text}\n"
-            if matches_text:
-                embed.add_field(name=f"Round {current_round} Matches", value=matches_text, inline=False)
+            # Text Fields
+            draw.text((margin + 10, y_offset + 10), f"#{i}", fill=(255, 255, 255), font=font)
+            draw.text((margin + 120, y_offset + 10), name_str, fill=(255, 255, 255), font=font)
 
-        return embed
+            if b_type in ['point_system', 'round_robin']:
+                score_str = f"{scores.get(str(p), 0)} pts"
+            else:
+                stats = scores.get(str(p), {'wins': 0, 'losses': 0})
+                score_str = f"{stats['wins']} W / {stats['losses']} L"
 
-    async def announce_matches(self, ctx, t, match_ids):
+            draw.text((margin + 550, y_offset + 10), score_str, fill=(67, 181, 129), font=font)
+
+            if b_type == 'double_elimination':
+                losses = scores.get(str(p), {}).get('losses', 0)
+                status = "Eliminated" if losses >= 2 else "Active"
+                color = (240, 71, 71) if losses >= 2 else (67, 181, 129)
+                draw.text((margin + 720, y_offset + 10), status, fill=color, font=font)
+
+            y_offset += row_height
+
+        # 4. Pending Matches Section
+        if pending_matches:
+            y_offset += margin // 2
+            match_title = f"Pending Matches (Round {current_round})" if current_round else "Pending Matches"
+            draw.text((margin, y_offset), match_title, fill=(114, 137, 218), font=header_font)
+            y_offset += int(row_height * 0.8)
+
+            for m in pending_matches:
+                p1_str = names.get(str(m['p1']), f"User {m['p1']}")
+                p2_str = names.get(str(m['p2']), f"User {m['p2']}")
+                
+                # Match line formatting
+                draw.text((margin + 10, y_offset), f"{p1_str}  vs  {p2_str}", fill=(255, 255, 255), font=font)
+                y_offset += int(row_height * 0.75)
+
+        buffer = io.BytesIO()
+        image.save(buffer, format='PNG')
+        buffer.seek(0)
+        return buffer
+
+    async def send_status_image(self, target_channel, name, t):
+        """Helper to seamlessly generate and send the visual bracket/leaderboard."""
+        buffer = await self.get_image_buffer(t)
+        file = discord.File(buffer, filename="bracket.png")
+        embed = discord.Embed(title=f"Bracket: {name} ({t['state'].upper()})", color=0x7289da)
+        embed.set_image(url="attachment://bracket.png")
+        await target_channel.send(embed=embed, file=file)
+
+    async def announce_matches(self, ctx_or_channel, t, match_ids):
         """Pings the players who are paired up."""
         for mid in match_ids:
             match = t['matches'][str(mid)]
             if match.get('p1') not in (None, 'BYE') and match.get('p2') not in (None, 'BYE'):
-                await ctx.send(f"⚔️ **Match Time!** <@{match['p1']}> 🆚 <@{match['p2']}>\n*Managers can report the winner using `;bracket report {t['name']} @winner` or complete a duel!*")
+                await ctx_or_channel.send(f"⚔️ **Match Time!** <@{match['p1']}> 🆚 <@{match['p2']}>\n*Managers can report the winner using `;bracket report "{t['name']}" @winner` or complete a TLE duel!*")
 
     # --- DISCORD COMMANDS ---
 
@@ -348,7 +463,8 @@ class Brackets(commands.Cog):
             'state': 'registering',
             'managers': list(set(manager_ids)),
             'players': [],
-            'matches': {}
+            'matches': {},
+            'channel_id': ctx.channel.id # Bind to current channel for live updates
         }
         self.save_data()
         await ctx.send(f"✅ Created {b_type.replace('_', ' ')} bracket `{name}`. Type `;bracket register \"{name}\"` to join!")
@@ -475,6 +591,8 @@ class Brackets(commands.Cog):
         if t['state'] != 'registering': return await ctx.send("❌ Bracket is already started.")
         if len(t['players']) < 2: return await ctx.send("❌ Need at least 2 players to start.")
 
+        t['channel_id'] = ctx.channel.id # Rebind to channel where it was started
+
         players = t['players'].copy()
         random.shuffle(players)
         t['state'] = 'active'
@@ -517,9 +635,9 @@ class Brackets(commands.Cog):
         self.save_data()
         
         await ctx.send(f"🏆 Bracket **{name}** has started!")
-        await self.status(ctx, name)
+        await self.send_status_image(ctx.channel, name, t)
         if active_matches:
-            await self.announce_matches(ctx, t, active_matches)
+            await self.announce_matches(ctx.channel, t, active_matches)
 
     @bracket.command(brief='Manually report the winner of a match.')
     async def report(self, ctx, name: str, winner: discord.Member):
@@ -535,11 +653,13 @@ class Brackets(commands.Cog):
         if not self.is_manager(ctx, t): return await ctx.send("❌ Only managers can manually report scores.")
         if t['state'] != 'active': return await ctx.send("❌ Bracket is not currently active.")
 
+        t['channel_id'] = ctx.channel.id
+
         if t['type'] == 'point_system':
             t['scores'][str(winner.id)] = t['scores'].get(str(winner.id), 0) + 1
             self.save_data()
             await ctx.send(f"✅ Added 1 point for **{winner.display_name}**!")
-            return await self.status(ctx, name)
+            return await self.send_status_image(ctx.channel, name, t)
 
         # Find the active match containing the winner for other types
         active_match = None
@@ -555,36 +675,34 @@ class Brackets(commands.Cog):
         if not active_match:
             return await ctx.send(f"❌ Could not find an active pending match for {winner.display_name}.")
 
-        await self.process_win(name, t, active_match, winner.id)
+        new_matches = await self.process_win(name, t, active_match, winner.id)
 
         await ctx.send(f"✅ Reported win for **{winner.display_name}**!")
-        await self.status(ctx, name)
+        await self.send_status_image(ctx.channel, name, t)
         
         if t['state'] == 'finished':
             await ctx.send(f"🎉 **TOURNAMENT FINISHED!** 🎉")
+        elif new_matches:
+            await self.announce_matches(ctx.channel, t, new_matches)
 
     @bracket.command(brief='Show current bracket image or leaderboard.')
     async def status(self, ctx, name: str):
         """
-        Displays the current status of the bracket.
+        Displays the current visual status of the bracket.
         
-        Generates a visual bracket tree for Single Elimination, 
+        Generates a graphical bracket tree for Single Elimination, 
         or an embedded leaderboard/standings page for other types.
         """
         t = self.tournaments.get(name)
         if not t: return await ctx.send("❌ Bracket not found.")
+        
+        t['channel_id'] = ctx.channel.id
+        self.save_data()
+        
         if t['state'] == 'registering':
             return await ctx.send(f"Bracket `{name}` is registering. Players: {len(t['players'])}")
 
-        if t['type'] == 'single_elimination':
-            buffer = await self.bot.loop.run_in_executor(None, self.generate_bracket_image, t)
-            file = discord.File(buffer, filename="bracket.png")
-            embed = discord.Embed(title=f"Bracket: {name} ({t['state'].upper()})", color=0x7289da)
-            embed.set_image(url="attachment://bracket.png")
-            await ctx.send(embed=embed, file=file)
-        else:
-            embed = self.generate_leaderboard_embed(t)
-            await ctx.send(embed=embed)
+        await self.send_status_image(ctx.channel, name, t)
 
 async def setup(bot):
     await bot.add_cog(Brackets(bot))
