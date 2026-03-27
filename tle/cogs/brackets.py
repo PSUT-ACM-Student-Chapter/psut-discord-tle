@@ -13,17 +13,33 @@ def generate_pretty_bracket_image(rounds):
     """
     Generates a beautiful, Discord-themed bracket image using PIL.
     """
-    # UI Configuration
-    box_w, box_h = 160, 40
-    h_gap, v_gap = 60, 20
+    # UI Configuration - Expanded size to prevent overflow
+    box_w, box_h = 180, 44
+    h_gap, v_gap = 70, 24
     
     R = len(rounds)
     if R == 0:
         return None
         
-    # Calculate total image size dynamically
+    def calc_y(r, i):
+        """
+        Mathematical binary tree grid. Guarantees perfect visual spacing
+        regardless of missing matches or uneven brackets.
+        """
+        if r == 0:
+            y_idx = i
+        else:
+            y_idx = (2**(r-1) - 0.5) + i * (2**r)
+        return 20 + y_idx * (box_h + v_gap)
+        
+    # Dynamically calculate required image height by finding the lowest box
+    max_y = 0
+    for r in range(R):
+        for i in range(len(rounds[r])):
+            max_y = max(max_y, calc_y(r, i))
+            
     img_w = R * (box_w + h_gap) + 20
-    img_h = len(rounds[0]) * (box_h + v_gap) + 40
+    img_h = int(max_y + box_h + 40)
     
     # Create image with Discord's dark background color
     img = Image.new('RGB', (img_w, img_h), color=(49, 51, 56)) 
@@ -31,7 +47,7 @@ def generate_pretty_bracket_image(rounds):
     
     # Attempt to load TLE's default fonts, fallback to default if missing
     try:
-        font = ImageFont.truetype("tle/assets/fonts/NotoSans-Bold.ttf", 15)
+        font = ImageFont.truetype("tle/assets/fonts/NotoSans-Bold.ttf", 16)
     except:
         font = ImageFont.load_default()
         
@@ -45,43 +61,41 @@ def generate_pretty_bracket_image(rounds):
             is_tbd = name_str in ("TBD", "???", "None", "BYE")
             is_winner = (r == R - 1 and not is_tbd)
             
-            # Calculate Y position
-            if r == 0:
-                y = 20 + i * (box_h + v_gap)
-            else:
-                # Center vertically between the two "parent" boxes from the previous round
-                try:
-                    p1_y = pos[(r-1, i*2)][1]
-                    p2_y = pos[(r-1, i*2+1)][1]
-                    y = (p1_y + p2_y) / 2 - box_h / 2
-                except KeyError:
-                    # Fallback if the bracket layout isn't a perfect power of 2
-                    y = 20 + i * (box_h + v_gap) * (2 ** r)
-                    
-            # Save center-right coordinate to connect to the next round
+            y = calc_y(r, i)
             pos[(r, i)] = (x + box_w, y + box_h / 2)
             
             # 1. Draw connecting lines to the previous round
             if r > 0:
-                try:
+                expected_p1_y = calc_y(r-1, i*2) + box_h / 2
+                expected_p2_y = calc_y(r-1, i*2 + 1) + box_h / 2
+                mid_x = x - h_gap / 2
+                line_col = (88, 101, 242) # Discord Blurple
+                
+                # Top Parent Line
+                if (r-1, i*2) in pos:
                     px1, py1 = pos[(r-1, i*2)]
-                    px2, py2 = pos[(r-1, i*2+1)]
-                    mid_x = px1 + (x - px1) / 2
-                    
-                    line_col = (88, 101, 242) # Discord Blurple
-                    
-                    # Draw the branching lines
                     draw.line([(px1, py1), (mid_x, py1)], fill=line_col, width=2)
+                    draw.line([(mid_x, py1), (mid_x, y + box_h / 2)], fill=line_col, width=2)
+                else:
+                    # Draw a stub if the parent is missing so it doesn't look broken
+                    draw.line([(x - h_gap, expected_p1_y), (mid_x, expected_p1_y)], fill=line_col, width=2)
+                    draw.line([(mid_x, expected_p1_y), (mid_x, y + box_h / 2)], fill=line_col, width=2)
+                    
+                # Bottom Parent Line
+                if (r-1, i*2+1) in pos:
+                    px2, py2 = pos[(r-1, i*2+1)]
                     draw.line([(px2, py2), (mid_x, py2)], fill=line_col, width=2)
-                    draw.line([(mid_x, py1), (mid_x, py2)], fill=line_col, width=2)
-                    draw.line([(mid_x, y + box_h / 2), (x, y + box_h / 2)], fill=line_col, width=2)
-                except KeyError:
-                    pass
+                    draw.line([(mid_x, py2), (mid_x, y + box_h / 2)], fill=line_col, width=2)
+                else:
+                    draw.line([(x - h_gap, expected_p2_y), (mid_x, expected_p2_y)], fill=line_col, width=2)
+                    draw.line([(mid_x, expected_p2_y), (mid_x, y + box_h / 2)], fill=line_col, width=2)
+                    
+                # Main horizontal stem into the current box
+                draw.line([(mid_x, y + box_h / 2), (x, y + box_h / 2)], fill=line_col, width=2)
             
             # 2. Draw the Match Box
             fill_col = (43, 45, 49) # Discord darker secondary background
             
-            # Outline color logic (Green for winner, Blurple for normal, Dark Gray for TBD)
             if is_winner:
                 out_col = (87, 242, 135) 
             elif is_tbd:
@@ -90,16 +104,13 @@ def generate_pretty_bracket_image(rounds):
                 out_col = (88, 101, 242)
             
             try:
-                # Requires Pillow >= 8.2.0
                 draw.rounded_rectangle([x, y, x+box_w, y+box_h], radius=6, fill=fill_col, outline=out_col, width=2)
             except AttributeError:
-                # Fallback for older Pillow versions
                 draw.rectangle([x, y, x+box_w, y+box_h], fill=fill_col, outline=out_col, width=2)
                 
             # 3. Draw the Player Name
             txt_col = (255, 255, 255) if not is_tbd else (128, 132, 142)
             
-            # Get text dimensions to center it perfectly
             if hasattr(font, 'getbbox'):
                 bbox = font.getbbox(name_str)
                 tw = bbox[2] - bbox[0]
@@ -107,14 +118,13 @@ def generate_pretty_bracket_image(rounds):
             elif hasattr(draw, 'textsize'):
                 tw, th = draw.textsize(name_str, font=font)
             else:
-                tw, th = len(name_str) * 8, 15
+                tw, th = len(name_str) * 8, 16
                 
             tx = x + (box_w - tw) / 2
             ty = y + (box_h - th) / 2 - 2
             
             draw.text((tx, ty), name_str, fill=txt_col, font=font)
             
-            # Add a little trophy to the final winner
             if is_winner:
                 draw.text((x + box_w - 25, ty), "🏆", fill=(255, 255, 255), font=font)
             
@@ -140,31 +150,62 @@ class Brackets(commands.Cog):
         players = t.get('players', {})
 
         def get_name(pid):
-            if not pid: return "TBD"
+            if pid is None or str(pid).upper() == "BYE": return "BYE"
+            if str(pid) == "TBD": return "TBD"
+
+            # If the pid is actually a full player dictionary
+            if isinstance(pid, dict):
+                return str(pid.get('name', pid.get('username', pid.get('id', 'TBD'))))
+
+            # If players is stored as a dictionary
             if isinstance(players, dict):
-                p = players.get(str(pid)) or players.get(int(pid))
+                p = players.get(str(pid)) or players.get(int(pid) if str(pid).isdigit() else pid)
                 if isinstance(p, dict):
-                    return p.get('name', str(pid))
-                if isinstance(p, str):
+                    return str(p.get('name', p.get('username', pid)))
+                elif isinstance(p, str):
                     return p
+
+                # Deep search by ID or seed
+                for k, v in players.items():
+                    if isinstance(v, dict):
+                        if str(v.get('id')) == str(pid) or str(v.get('seed')) == str(pid) or v.get('name') == pid:
+                            return str(v.get('name', pid))
+                    elif str(v) == str(pid):
+                        return str(v)
+
+            # If players is stored as a list
             elif isinstance(players, list):
                 for p in players:
-                    if isinstance(p, dict) and (p.get('id') == pid or p.get('name') == pid):
-                        return p.get('name', str(pid))
+                    if isinstance(p, dict):
+                        if str(p.get('id')) == str(pid) or str(p.get('seed')) == str(pid) or p.get('name') == pid:
+                            return str(p.get('name', pid))
+                    elif str(p) == str(pid):
+                        return str(p)
+
             return str(pid)
 
-        # 1. If 'rounds' already natively exists in the data
         if 'rounds' in t and isinstance(t['rounds'], list) and len(t['rounds']) > 0 and isinstance(t['rounds'][0], list):
-            return t['rounds']
+            visual_rounds = []
+            for r in t['rounds']:
+                visual_rounds.append([get_name(p) for p in r])
+            return visual_rounds
 
-        # 2. Extract and construct rounds from 'matches'
         matches = t.get('matches', {})
-        match_list = list(matches.values()) if isinstance(matches, dict) else matches
+
+        # VERY IMPORTANT: Sort matches so the binary tree doesn't cross lines!
+        def sort_key(item):
+            k = item[0] if isinstance(item, tuple) else item.get('id', 0)
+            try: return int(k)
+            except: return str(k)
+
+        if isinstance(matches, dict):
+            match_list = [v for k, v in sorted(matches.items(), key=sort_key)]
+        else:
+            match_list = sorted(matches, key=sort_key)
 
         if not match_list:
             return []
 
-        # Group by round number
         rounds_dict = {}
         for m in match_list:
             r = m.get('round', 1)
@@ -177,22 +218,20 @@ class Brackets(commands.Cog):
 
         for r_num in sorted_round_nums:
             round_players = []
-            r_matches = rounds_dict[r_num]
-
-            for m in r_matches:
-                # Try standard keys that tournaments use for participants
+            for m in rounds_dict[r_num]:
                 p1_id = m.get('p1') or m.get('player1') or m.get('p1_id')
                 p2_id = m.get('p2') or m.get('player2') or m.get('p2_id')
                 round_players.extend([get_name(p1_id), get_name(p2_id)])
-
             rounds.append(round_players)
 
-        # 3. Find the final winner
+        # Append final winner
         last_round_matches = rounds_dict.get(sorted_round_nums[-1], [])
         if len(last_round_matches) == 1:
             winner_id = last_round_matches[0].get('winner')
             if winner_id:
                 rounds.append([get_name(winner_id)])
+            elif len(rounds) > 0:
+                rounds.append(["TBD"])
 
         return rounds
 
@@ -220,7 +259,7 @@ class Brackets(commands.Cog):
             embed.set_image(url="attachment://bracket.png")
 
             await channel.send(embed=embed, file=file)
-    
+   
     def __init__(self, bot):
         self.bot = bot
         self.tournaments = {}
