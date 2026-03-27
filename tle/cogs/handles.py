@@ -282,34 +282,45 @@ class Handles(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_remove(self, member):
-        cf_common.user_db.set_inactive([(member.guild.id, member.id)])
+        # Prevent marking a global user inactive if they are still in another server shared by the bot
+        in_other_guild = any(g.get_member(member.id) for g in self.bot.guilds if g != member.guild)
+        if not in_other_guild:
+            cf_common.user_db.set_inactive([("Global", member.id)])
 
     @commands.hybrid_command(description='update status, mark guild members as active')
     @commands.has_role(constants.TLE_ADMIN)
     async def _updatestatus(self, ctx):
-        gid = ctx.guild.id
-        active_ids = [m.id for m in ctx.guild.members]
-        cf_common.user_db.reset_status(gid)
-        rc = sum(cf_common.user_db.update_status(gid, chunk) for chunk in paginator.chunkify(active_ids, 100))
+        active_ids = set()
+        for guild in self.bot.guilds:
+            active_ids.update(m.id for m in guild.members)
+        active_ids = list(active_ids)
+        
+        cf_common.user_db.reset_status("Global")
+        rc = sum(cf_common.user_db.update_status("Global", chunk) for chunk in paginator.chunkify(active_ids, 100))
         await ctx.send(f'{rc} members active with handle')
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
-        rc = cf_common.user_db.update_status(member.guild.id, [member.id])
+        rc = cf_common.user_db.update_status("Global", [member.id])
         if rc == 1:
-            handle = cf_common.user_db.get_handle(member.id, member.guild.id)
-            await self._update_ranks(member.guild, [(int(member.id), handle)])
+            handle = cf_common.user_db.get_handle(member.id, "Global")
+            if handle:
+                await self._update_ranks(member.guild, [(int(member.id), handle)])
 
     @tasks.task_spec(name='SetExUsersInactive',
                      waiter=tasks.Waiter.fixed_delay(_UPDATE_HANDLE_STATUS_INTERVAL))
     async def _set_ex_users_inactive_task(self, _):
         # To set users inactive in case the bot was dead when they left.
-        to_set_inactive = []
+        user_id_handle_pairs = cf_common.user_db.get_handles_for_guild("Global")
+        
+        active_users = set()
         for guild in self.bot.guilds:
-            user_id_handle_pairs = cf_common.user_db.get_handles_for_guild(guild.id)
-            to_set_inactive += [(guild.id, user_id) for user_id, _ in user_id_handle_pairs
-                                if guild.get_member(user_id) is None]
-        cf_common.user_db.set_inactive(to_set_inactive)
+            active_users.update(m.id for m in guild.members)
+            
+        to_set_inactive = [("Global", user_id) for user_id, _ in user_id_handle_pairs
+                           if user_id not in active_users]
+        if to_set_inactive:
+            cf_common.user_db.set_inactive(to_set_inactive)
 
     @events.listener_spec(name='RatingChangesListener',
                           event_cls=events.RatingChangesUpdate,
@@ -372,7 +383,7 @@ class Handles(commands.Cog):
     async def _set(self, ctx, member, user):
         handle = user.handle
         try:
-            cf_common.user_db.set_handle(member.id, ctx.guild.id, handle)
+            cf_common.user_db.set_handle(member.id, "Global", handle)
         except db.UniqueConstraintFailed:
             raise HandleCogError(f'The handle `{handle}` is already associated with another user.')
         rc = cf_common.user_db.cache_cf_user(user)
@@ -392,11 +403,11 @@ class Handles(commands.Cog):
                           get_exception=lambda: HandleCogError('Identification is already running for you'))
     async def identify(self, ctx, handle: str):
         """Link a codeforces account to discord account by submitting a compile error to a random problem"""
-        if cf_common.user_db.get_handle(ctx.author.id, ctx.guild.id):
+        if cf_common.user_db.get_handle(ctx.author.id, "Global"):
             raise HandleCogError(f'{ctx.author.mention}, you cannot identify when your handle is '
                                  'already set. Ask an Admin or Moderator if you wish to change it')
 
-        if cf_common.user_db.get_user_id(handle, ctx.guild.id):
+        if cf_common.user_db.get_user_id(handle, "Global"):
             raise HandleCogError(f'The handle `{handle}` is already associated with another user. Ask an Admin or Moderator in case of an inconsistency.')
 
         if handle in cf_common.HandleIsVjudgeError.HANDLES:
@@ -424,7 +435,7 @@ class Handles(commands.Cog):
     @handle.command(description='Get handle by Discord username')
     async def get(self, ctx, member: discord.Member):
         """Show Codeforces handle of a user."""
-        handle = cf_common.user_db.get_handle(member.id, ctx.guild.id)
+        handle = cf_common.user_db.get_handle(member.id, "Global")
         if not handle:
             raise HandleCogError(f'Handle for {member.mention} not found in database')
         user = cf_common.user_db.fetch_cf_user(handle)
@@ -434,7 +445,7 @@ class Handles(commands.Cog):
     @handle.command(description='Get Discord username by cf handle')
     async def rget(self, ctx, handle: str):
         """Show Discord username of a cf handle."""
-        user_id = cf_common.user_db.get_user_id(handle, ctx.guild.id)
+        user_id = cf_common.user_db.get_user_id(handle, "Global")
         if not user_id:
             raise HandleCogError(f'Discord username for `{handle}` not found in database')
         user = cf_common.user_db.fetch_cf_user(handle)
@@ -444,45 +455,50 @@ class Handles(commands.Cog):
         embed = _make_profile_embed(member, user, mode='get')
         await ctx.send(embed=embed)
 
-
-    @handle.command(description='Unlink handle', aliases=["unlink"])
+    @handle.command(brief='Remove handle for a user')
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
-    async def remove(self, ctx, handle: str):
-        """Remove Codeforces handle of a user."""
-        handle, = await cf_common.resolve_handles(ctx, self.converter, [handle])
-        user_id = cf_common.user_db.get_user_id(handle, ctx.guild.id)
-        if user_id is None:
-            raise HandleCogError(f'{handle} not found in database')
+    async def remove(self, ctx, member: discord.Member):
+        """Remove handle for a user."""
+        rc = cf_common.user_db.remove_handle(member.id, "Global")
+        if rc:
+            await self.update_member_rank_role(member, role_to_assign=None, reason='Handle unlinked')
+            await ctx.send(f'Removed handle for {member.display_name}')
+        else:
+            await ctx.send(f'Handle for {member.display_name} not found in database')
 
-        cf_common.user_db.remove_handle(handle, ctx.guild.id)
-        member = ctx.guild.get_member(user_id)
-        await self.update_member_rank_role(member, role_to_assign=None,
-                                           reason='Handle unlinked')
-        embed = discord_common.embed_success(f'Removed {handle} from database')
-        await ctx.send(embed=embed)
+    @handle.command(brief='Forcefully remove a handle from the database')
+    @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
+    async def unbind(self, ctx, target_handle: str):
+        """Remove a specific handle from the database."""
+        rc = cf_common.user_db.remove_by_handle(target_handle)
+        if rc:
+            await ctx.send(f'Successfully removed handle `{target_handle}` from the database.')
+        else:
+            await ctx.send(f'Handle `{target_handle}` not found in the database.')
     
-
     @handle.command(description='Resolve redirect of a user\'s handle')
     async def unmagic(self, ctx):
         """Updates handle of the calling user if they have changed handles
         (typically new year's magic)"""
         member = ctx.author
-        handle = cf_common.user_db.get_handle(member.id, ctx.guild.id)
-        await self._unmagic_handles(ctx, [handle], {handle: member})
+        handle = cf_common.user_db.get_handle(member.id, "Global")
+        if handle:
+            await self._unmagic_handles(ctx, [handle], {handle: member})
 
     @handle.command(description='Resolve handles needing redirection')
     @commands.has_any_role(constants.TLE_ADMIN, constants.TLE_MODERATOR)
     async def unmagic_all(self, ctx):
         """Updates handles of all users that have changed handles
         (typically new year's magic)"""
-        user_id_and_handles = cf_common.user_db.get_handles_for_guild(ctx.guild.id)
+        user_id_and_handles = cf_common.user_db.get_handles_for_guild("Global")
 
         handles = []
         rev_lookup = {}
         for user_id, handle in user_id_and_handles:
             member = ctx.guild.get_member(user_id)
-            handles.append(handle)
-            rev_lookup[handle] = member
+            if member:
+                handles.append(handle)
+                rev_lookup[handle] = member
         await self._unmagic_handles(ctx, handles, rev_lookup)
 
     async def _unmagic_handles(self, ctx, handles, rev_lookup):
@@ -540,7 +556,9 @@ class Handles(commands.Cog):
             if not showall and member is None:
                 continue
             if score > 0:
-                handle = cf_common.user_db.get_handle(user_id, ctx.guild.id)
+                handle = cf_common.user_db.get_handle(user_id, "Global")
+                if not handle:
+                    continue
                 user = cf_common.user_db.fetch_cf_user(handle)
                 if user is None:
                     continue
@@ -623,7 +641,9 @@ class Handles(commands.Cog):
             if not showall and member is None:
                 continue
             if score > 0:
-                handle = cf_common.user_db.get_handle(user_id, ctx.guild.id)
+                handle = cf_common.user_db.get_handle(user_id, "Global")
+                if not handle:
+                    continue
                 user = cf_common.user_db.fetch_cf_user(handle)
                 if user is None:
                     continue
@@ -663,7 +683,7 @@ class Handles(commands.Cog):
         sourced from codeforces profiles. e.g. ;handle list Croatia Slovenia
         """
         countries = [country.title() for country in countries]
-        res = cf_common.user_db.get_cf_users_for_guild(ctx.guild.id)
+        res = cf_common.user_db.get_cf_users_for_guild("Global")
         users = [(ctx.guild.get_member(user_id), cf_user.handle, cf_user.rating)
                  for user_id, cf_user in res if not countries or cf_user.country in countries]
         users = [(member, handle, rating) for member, handle, rating in users if member is not None]
@@ -683,7 +703,7 @@ class Handles(commands.Cog):
         """Show members of the server who have registered their handles and their Codeforces
         ratings, in color.
         """
-        user_id_cf_user_pairs = cf_common.user_db.get_cf_users_for_guild(ctx.guild.id)
+        user_id_cf_user_pairs = cf_common.user_db.get_cf_users_for_guild("Global")
         user_id_cf_user_pairs.sort(key=lambda p: p[1].rating if p[1].rating is not None else -1,
                                    reverse=True)
         rows = []
@@ -729,7 +749,7 @@ class Handles(commands.Cog):
         """For each member in the guild, fetches their current ratings and updates their role if
         required.
         """
-        res = cf_common.user_db.get_handles_for_guild(guild.id)
+        res = cf_common.user_db.get_handles_for_guild("Global")
         await self._update_ranks(guild, res)
 
     async def _update_ranks(self, guild, res):
@@ -762,7 +782,7 @@ class Handles(commands.Cog):
         """Make an embed containing a list of rank changes and top rating increases for the members
         of this guild.
         """
-        user_id_handle_pairs = cf_common.user_db.get_handles_for_guild(guild.id)
+        user_id_handle_pairs = cf_common.user_db.get_handles_for_guild("Global")
         member_handle_pairs = [(guild.get_member(user_id), handle)
                                for user_id, handle in user_id_handle_pairs]
         def ispurg(member):
