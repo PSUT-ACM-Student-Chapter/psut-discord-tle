@@ -81,29 +81,41 @@ def get_cf_user(userid, guild_id):
     return cf_common.user_db.fetch_cf_user(handle)
 
 
-def complete_duel(duelid, guild_id, win_status, winner, loser, finish_time, score, dtype):
-    winner_r = cf_common.user_db.get_duel_rating(winner.id, guild_id)
-    loser_r = cf_common.user_db.get_duel_rating(loser.id, guild_id)
+def complete_duel(bot, duel_data, guild_id, win_status, winner, loser, finish_time, score, dtype):
+    duelid = duel_data[0]
+    challenger_id = duel_data[1]
+    challengee_id = duel_data[2]
+
+    # Handle None objects if members are no longer cached in the server
+    winner_id = challenger_id if win_status == Winner.CHALLENGER else (challengee_id if win_status == Winner.CHALLENGEE else (winner.id if winner else challenger_id))
+    loser_id = challengee_id if win_status == Winner.CHALLENGER else (challenger_id if win_status == Winner.CHALLENGEE else (loser.id if loser else challengee_id))
+
+    winner_r = cf_common.user_db.get_duel_rating(winner_id, guild_id)
+    loser_r = cf_common.user_db.get_duel_rating(loser_id, guild_id)
     delta = round(elo_delta(winner_r, loser_r, score))
     rc = cf_common.user_db.complete_duel(
-        duelid, guild_id, win_status, finish_time, winner.id, loser.id, delta, dtype)
+        duelid, guild_id, win_status, finish_time, winner_id, loser_id, delta, dtype)
+    
     if win_status != Winner.DRAW:
-            winner_id = duel.challenger_id if win_status == Winner.CHALLENGER else duel.challengee_id
-            loser_id = duel.challengee_id if win_status == Winner.CHALLENGER else duel.challenger_id
-            self.bot.dispatch("duel_complete", winner_id, loser_id)
+        bot.dispatch("duel_complete", winner_id, loser_id)
+        
     if rc == 0:
         raise DuelCogError('Hey! No cheating!')
 
     if dtype == DuelType.UNOFFICIAL or dtype == DuelType.ADJUNOFFICIAL:
         return None
 
-    winner_cf = get_cf_user(winner.id, guild_id)
-    loser_cf = get_cf_user(loser.id, guild_id)
+    winner_cf = get_cf_user(winner_id, guild_id)
+    loser_cf = get_cf_user(loser_id, guild_id)
     desc = f'Rating change after **[{winner_cf.handle}]({winner_cf.url})** vs **[{loser_cf.handle}]({loser_cf.url})**:'
     embed = discord_common.cf_color_embed(description=desc)
-    embed.add_field(name=f'{winner.display_name}',
+    
+    winner_name = winner.display_name if winner else winner_cf.handle
+    loser_name = loser.display_name if loser else loser_cf.handle
+    
+    embed.add_field(name=f'{winner_name}',
                     value=f'{winner_r} -> {winner_r + delta}', inline=False)
-    embed.add_field(name=f'{loser.display_name}',
+    embed.add_field(name=f'{loser_name}',
                     value=f'{loser_r} -> {loser_r - delta}', inline=False)
     return embed
 
@@ -166,7 +178,7 @@ class Dueling(commands.Cog):
                 if challengee is None:
                     logger.warn(f'_check_ongoing_duels_for_guild: member with {challengee_id} could not be retrieved.')
 
-                embed = complete_duel(duelid, guild.id, Winner.DRAW,
+                embed = complete_duel(self.bot, entry, guild.id, Winner.DRAW,
                                 challenger, challengee, now, 0.5, dtype)
                 timelimit = cf_common.pretty_time_format(_DUEL_MAX_DUEL_DURATION) 
                 await channel.send(f'Auto draw of duel between {challenger.mention} and {challengee.mention} since it was active for more than {timelimit}.', embed=embed)    
@@ -444,7 +456,7 @@ class Dueling(commands.Cog):
         loser = lowrated_member
         win_status = Winner.CHALLENGER if winner == challenger else Winner.CHALLENGEE
         win_time = highrated_timestamp       
-        embed = complete_duel(duelid, ctx.guild.id, win_status,
+        embed = complete_duel(self.bot, active, ctx.guild.id, win_status,
                             winner, loser, win_time, 1, dtype)
         await ctx.send(f'{loser.mention} gave up. {winner.mention} won the duel against {loser.mention}!', embed=embed)
 
@@ -508,13 +520,13 @@ class Dueling(commands.Cog):
                 diff = cf_common.pretty_time_format(
                 abs(highrated_duration * coeff - lowerrated_duration), always_seconds=True)                    
                 win_status = Winner.CHALLENGER if winner == challenger else Winner.CHALLENGEE
-                embed = complete_duel(duelid, guild.id, win_status, winner, loser, win_time, 1, dtype)
+                embed = complete_duel(self.bot, data, guild.id, win_status, winner, loser, win_time, 1, dtype)
                 if adjusted:
                     await channel.send(f"Both {challenger.mention} and {challengee.mention} solved it. But {winner.mention} was {diff} faster than the adjusted time limit!", embed=embed)
                 else: 
                     await channel.send(f'Both {challenger.mention} and {challengee.mention} solved it but {winner.mention} was {diff} faster!', embed=embed)
             else:
-                embed = complete_duel(duelid, guild.id, Winner.DRAW,
+                embed = complete_duel(self.bot, data, guild.id, Winner.DRAW,
                                       challenger, challengee, highrated_timestamp, 0.5, dtype)
                 if adjusted:
                     await channel.send(f"{challenger.mention} and {challengee.mention} solved the problem with the same adjusted time! It's a draw!", embed=embed)
@@ -529,8 +541,8 @@ class Dueling(commands.Cog):
                 loser = lowrated_member
                 win_status = Winner.CHALLENGER if winner == challenger else Winner.CHALLENGEE
                 win_time = highrated_timestamp
-                embed = complete_duel(duelid, guild.id, win_status,
-                                    winner, loser, win_time, 1, dtype)
+                embed = complete_duel(self.bot, data, guild.id, win_status,
+                                      winner, loser, win_time, 1, dtype)
                 await channel.send(f'{winner.mention} beat {loser.mention} in a duel!', embed=embed)
             else:
                 time_remaining = lowerrated_duration - current_duration
@@ -544,7 +556,7 @@ class Dueling(commands.Cog):
             loser = highrated_member
             win_status = Winner.CHALLENGER if winner == challenger else Winner.CHALLENGEE
             win_time = lowrated_timestamp
-            embed = complete_duel(duelid, guild.id, win_status,
+            embed = complete_duel(self.bot, data, guild.id, win_status,
                                   winner, loser, win_time, 1, dtype)
             await channel.send(f'{winner.mention} beat {loser.mention} in a duel!', embed=embed)
         else:
@@ -592,7 +604,7 @@ class Dueling(commands.Cog):
             return
 
         offerer = ctx.guild.get_member(self.draw_offers[duelid])
-        embed = complete_duel(duelid, ctx.guild.id, Winner.DRAW,
+        embed = complete_duel(self.bot, active, ctx.guild.id, Winner.DRAW,
                               offerer, ctx.author, now, 0.5, dtype)
         await ctx.send(f'{ctx.author.mention} accepted draw offer by {offerer.mention}.', embed=embed)
 
