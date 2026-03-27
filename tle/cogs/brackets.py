@@ -9,126 +9,230 @@ import discord
 from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont
 
-def generate_pretty_bracket_image(rounds):
-    """
-    Generates a beautiful, Discord-themed bracket image using PIL.
-    """
-    # UI Configuration - Expanded size to prevent overflow
-    box_w, box_h = 180, 44
-    h_gap, v_gap = 70, 24
-    
-    R = len(rounds)
-    if R == 0:
-        return None
+class BracketRenderer:
+    """Unified UI engine for drawing brackets and tournament dashboards."""
+    def __init__(self, tournament, names_dict):
+        self.t = tournament
+        self.names = names_dict
+        self.b_type = tournament.get('type')
         
-    def calc_y(r, i):
-        """
-        Mathematical binary tree grid. Guarantees perfect visual spacing
-        regardless of missing matches or uneven brackets.
-        """
-        if r == 0:
-            y_idx = i
+        # UI Theme (Discord Modern Dark)
+        self.bg_color = (43, 45, 49)       # Base background
+        self.box_color = (49, 51, 56)      # Match box background
+        self.box_outline = (30, 31, 34)    # Match box inner border
+        self.line_color = (88, 101, 242)   # Blurple connections
+        self.text_color = (242, 243, 245)  # White text
+        self.tbd_color = (128, 132, 142)   # Gray TBD text
+        self.win_outline = (87, 242, 135)  # Green win outline
+        self.win_text = (87, 242, 135)     # Green win text
+        self.loss_text = (237, 66, 69)     # Red loss text
+        
+        # Dimensions
+        self.box_w = 220
+        self.box_h = 64
+        self.gap_x = 60
+        self.gap_y = 24
+        
+        # Fonts
+        try:
+            self.font = ImageFont.truetype("tle/assets/fonts/NotoSans-Bold.ttf", 16)
+            self.title_font = ImageFont.truetype("tle/assets/fonts/NotoSans-Bold.ttf", 24)
+        except:
+            self.font = ImageFont.load_default()
+            self.title_font = ImageFont.load_default()
+
+    def draw_rounded_rect(self, draw, xy, radius, fill, outline, width=2):
+        try:
+            draw.rounded_rectangle(xy, radius=radius, fill=fill, outline=outline, width=width)
+        except AttributeError:
+            draw.rectangle(xy, fill=fill, outline=outline, width=width)
+
+    def get_name(self, player_id):
+        if player_id in (None, "TBD", "None"): return "TBD"
+        if player_id == "BYE": return "BYE"
+        name = self.names.get(str(player_id), f"User {player_id}")
+        return name[:20] + "..." if len(name) > 20 else name
+
+    def draw_match_box(self, draw, x, y, match):
+        p1 = match.get('p1')
+        p2 = match.get('p2')
+        winner = match.get('winner')
+        
+        outline = self.win_outline if winner else self.box_outline
+        self.draw_rounded_rect(draw, [x, y, x + self.box_w, y + self.box_h], 8, self.box_color, outline, 2)
+        
+        # Separator line
+        draw.line([(x, y + self.box_h/2), (x + self.box_w, y + self.box_h/2)], fill=self.box_outline, width=2)
+        
+        # Draw players
+        for i, pid in enumerate([p1, p2]):
+            name = self.get_name(pid)
+            is_winner = (winner == pid and pid is not None)
+            is_loser = (winner is not None and not is_winner and pid not in (None, "BYE"))
+            
+            color = self.win_text if is_winner else self.loss_text if is_loser else self.text_color
+            if name in ("TBD", "BYE"): color = self.tbd_color
+            
+            text_y = y + 8 if i == 0 else y + self.box_h/2 + 8
+            draw.text((x + 12, text_y), name, fill=color, font=self.font)
+            
+            if is_winner:
+                draw.text((x + self.box_w - 28, text_y), "🏆", fill=self.win_text, font=self.font)
+
+    def draw_single_elim(self):
+        """Draws a strict binary tree bracket layout."""
+        matches = self.t.get('matches', {})
+        if not matches: return None
+        
+        match_ids = [int(k) for k in matches.keys()]
+        max_id = max(match_ids)
+        max_depth = int(math.log2(max_id)) if match_ids else 0
+        
+        def get_depth(mid):
+            return int(math.log2(mid)) if mid > 0 else 0
+            
+        x_coords = {}
+        y_coords = {}
+        
+        # Calculate Coordinates 
+        leaf_nodes = sorted([mid for mid in match_ids if get_depth(mid) == max_depth])
+        for idx, mid in enumerate(leaf_nodes):
+            x_coords[mid] = 40
+            y_coords[mid] = 80 + idx * (self.box_h + self.gap_y)
+            
+        for d in range(max_depth - 1, -1, -1):
+            nodes = [mid for mid in match_ids if get_depth(mid) == d]
+            for mid in nodes:
+                r = max_depth - d
+                x_coords[mid] = 40 + r * (self.box_w + self.gap_x)
+                
+                # Children in binary heap math
+                child1, child2 = mid * 2, mid * 2 + 1
+                if child1 in y_coords and child2 in y_coords:
+                    y_coords[mid] = (y_coords[child1] + y_coords[child2]) / 2
+                elif child1 in y_coords:
+                    y_coords[mid] = y_coords[child1]
+                else:
+                    y_coords[mid] = 80
+                    
+        max_x = max(x_coords.values()) + self.box_w + 80 if x_coords else 800
+        max_y = max(y_coords.values()) + self.box_h + 80 if y_coords else 600
+        
+        img = Image.new('RGB', (int(max_x), int(max_y)), self.bg_color)
+        draw = ImageDraw.Draw(img)
+        
+        draw.text((40, 24), f"🏆 {self.t['name']} - Single Elimination", fill=self.text_color, font=self.title_font)
+        
+        # Draw connecting lines first
+        for mid in match_ids:
+            if mid == 1: continue # Final match doesn't point to anything
+            parent = mid // 2
+            if parent in x_coords and parent in y_coords:
+                start_x = x_coords[mid] + self.box_w
+                start_y = y_coords[mid] + self.box_h / 2
+                end_x = x_coords[parent]
+                end_y = y_coords[parent] + self.box_h / 2
+                mid_x = start_x + self.gap_x / 2
+                
+                draw.line([(start_x, start_y), (mid_x, start_y)], fill=self.line_color, width=3)
+                draw.line([(mid_x, start_y), (mid_x, end_y)], fill=self.line_color, width=3)
+                draw.line([(mid_x, end_y), (end_x, end_y)], fill=self.line_color, width=3)
+                
+        # Draw match boxes over the lines
+        for mid in match_ids:
+            self.draw_match_box(draw, x_coords[mid], y_coords[mid], matches[str(mid)])
+            
+        return img
+
+    def draw_standings_dashboard(self):
+        """Draws a beautiful dashboard for Double Elimination, Swiss, and Point Systems."""
+        scores = self.t.get('scores', {})
+        players = self.t.get('players', [])
+        b_type = self.b_type
+        
+        if b_type in ['point_system', 'round_robin']:
+            sorted_players = sorted(players, key=lambda p: scores.get(str(p), 0), reverse=True)
         else:
-            y_idx = (2**(r-1) - 0.5) + i * (2**r)
-        return 20 + y_idx * (box_h + v_gap)
+            sorted_players = sorted(players, key=lambda p: (scores.get(str(p), {}).get('wins', 0), -scores.get(str(p), {}).get('losses', 0)), reverse=True)
+            
+        margin = 40
+        header_h = 80
+        row_h = 48
+        col_w_rank = 60
+        col_w_name = 260
+        col_w_score = 160
+        col_w_status = 120
         
-    # Dynamically calculate required image height by finding the lowest box
-    max_y = 0
-    for r in range(R):
-        for i in range(len(rounds[r])):
-            max_y = max(max_y, calc_y(r, i))
+        table_w = col_w_rank + col_w_name + col_w_score
+        if b_type in ['double_elimination', 'swiss']:
+            table_w += col_w_status
             
-    img_w = R * (box_w + h_gap) + 20
-    img_h = int(max_y + box_h + 40)
-    
-    # Create image with Discord's dark background color
-    img = Image.new('RGB', (img_w, img_h), color=(49, 51, 56)) 
-    draw = ImageDraw.Draw(img)
-    
-    # Attempt to load TLE's default fonts, fallback to default if missing
-    try:
-        font = ImageFont.truetype("tle/assets/fonts/NotoSans-Bold.ttf", 16)
-    except:
-        font = ImageFont.load_default()
+        match_start_x = margin * 2 + table_w
+        match_col_w = self.box_w + self.gap_x
         
-    pos = {} # Stores the center-right coordinates of each box for drawing lines
-    
-    for r in range(R):
-        x = 20 + r * (box_w + h_gap)
+        # Organize matches by round
+        rounds = {}
+        for m in self.t.get('matches', {}).values():
+            r = m.get('round', 1)
+            rounds.setdefault(r, []).append(m)
+            
+        num_rounds = max(rounds.keys()) if rounds else 1
+        max_matches = max([len(rm) for rm in rounds.values()]) if rounds else 0
         
-        for i, name in enumerate(rounds[r]):
-            name_str = str(name) if name else "TBD"
-            is_tbd = name_str in ("TBD", "???", "None", "BYE")
-            is_winner = (r == R - 1 and not is_tbd)
+        # Calculate Canvas Dimensions
+        img_w = max(1000, match_start_x + num_rounds * match_col_w + margin)
+        img_h = max(600, header_h + margin + max(len(sorted_players) * row_h, max_matches * (self.box_h + self.gap_y)))
+        
+        img = Image.new('RGB', (img_w, img_h), self.bg_color)
+        draw = ImageDraw.Draw(img)
+        
+        draw.text((margin, 24), f"🏆 {self.t['name']} - {b_type.replace('_', ' ').title()}", fill=self.text_color, font=self.title_font)
+        
+        # Draw Table Headers
+        y = header_h + margin
+        draw.text((margin, y), "Rank", fill=self.tbd_color, font=self.font)
+        draw.text((margin + col_w_rank, y), "Player", fill=self.tbd_color, font=self.font)
+        draw.text((margin + col_w_rank + col_w_name, y), "Score", fill=self.tbd_color, font=self.font)
+        if b_type in ['double_elimination', 'swiss']:
+            draw.text((margin + col_w_rank + col_w_name + col_w_score, y), "Status", fill=self.tbd_color, font=self.font)
             
-            y = calc_y(r, i)
-            pos[(r, i)] = (x + box_w, y + box_h / 2)
+        y += row_h
+        
+        # Draw Players
+        for i, p in enumerate(sorted_players):
+            row_bg = self.box_color if i % 2 == 0 else self.bg_color
+            draw.rectangle([margin, y - 10, margin + table_w, y + row_h - 10], fill=row_bg)
             
-            # 1. Draw connecting lines to the previous round
-            if r > 0:
-                expected_p1_y = calc_y(r-1, i*2) + box_h / 2
-                expected_p2_y = calc_y(r-1, i*2 + 1) + box_h / 2
-                mid_x = x - h_gap / 2
-                line_col = (88, 101, 242) # Discord Blurple
-                
-                # Top Parent Line
-                if (r-1, i*2) in pos:
-                    px1, py1 = pos[(r-1, i*2)]
-                    draw.line([(px1, py1), (mid_x, py1)], fill=line_col, width=2)
-                    draw.line([(mid_x, py1), (mid_x, y + box_h / 2)], fill=line_col, width=2)
-                else:
-                    # Draw a stub if the parent is missing so it doesn't look broken
-                    draw.line([(x - h_gap, expected_p1_y), (mid_x, expected_p1_y)], fill=line_col, width=2)
-                    draw.line([(mid_x, expected_p1_y), (mid_x, y + box_h / 2)], fill=line_col, width=2)
-                    
-                # Bottom Parent Line
-                if (r-1, i*2+1) in pos:
-                    px2, py2 = pos[(r-1, i*2+1)]
-                    draw.line([(px2, py2), (mid_x, py2)], fill=line_col, width=2)
-                    draw.line([(mid_x, py2), (mid_x, y + box_h / 2)], fill=line_col, width=2)
-                else:
-                    draw.line([(x - h_gap, expected_p2_y), (mid_x, expected_p2_y)], fill=line_col, width=2)
-                    draw.line([(mid_x, expected_p2_y), (mid_x, y + box_h / 2)], fill=line_col, width=2)
-                    
-                # Main horizontal stem into the current box
-                draw.line([(mid_x, y + box_h / 2), (x, y + box_h / 2)], fill=line_col, width=2)
+            draw.text((margin, y), f"#{i+1}", fill=self.text_color, font=self.font)
+            draw.text((margin + col_w_rank, y), self.get_name(p), fill=self.text_color, font=self.font)
             
-            # 2. Draw the Match Box
-            fill_col = (43, 45, 49) # Discord darker secondary background
-            
-            if is_winner:
-                out_col = (87, 242, 135) 
-            elif is_tbd:
-                out_col = (30, 31, 34)
+            if b_type in ['point_system', 'round_robin']:
+                score_str = f"{scores.get(str(p), 0)} pts"
             else:
-                out_col = (88, 101, 242)
+                stats = scores.get(str(p), {'wins': 0, 'losses': 0})
+                score_str = f"{stats['wins']} W - {stats['losses']} L"
+            draw.text((margin + col_w_rank + col_w_name, y), score_str, fill=self.win_text, font=self.font)
             
-            try:
-                draw.rounded_rectangle([x, y, x+box_w, y+box_h], radius=6, fill=fill_col, outline=out_col, width=2)
-            except AttributeError:
-                draw.rectangle([x, y, x+box_w, y+box_h], fill=fill_col, outline=out_col, width=2)
+            if b_type in ['double_elimination', 'swiss']:
+                losses = scores.get(str(p), {}).get('losses', 0)
+                status = "Eliminated" if losses >= 2 else "Active"
+                s_color = self.loss_text if losses >= 2 else self.win_text
+                draw.text((margin + col_w_rank + col_w_name + col_w_score, y), status, fill=s_color, font=self.font)
                 
-            # 3. Draw the Player Name
-            txt_col = (255, 255, 255) if not is_tbd else (128, 132, 142)
+            y += row_h
             
-            if hasattr(font, 'getbbox'):
-                bbox = font.getbbox(name_str)
-                tw = bbox[2] - bbox[0]
-                th = bbox[3] - bbox[1]
-            elif hasattr(draw, 'textsize'):
-                tw, th = draw.textsize(name_str, font=font)
-            else:
-                tw, th = len(name_str) * 8, 16
+        # Draw Matches Right Side
+        for r in sorted(rounds.keys()):
+            col_x = match_start_x + (r - 1) * match_col_w
+            draw.text((col_x, header_h + margin), f"Round {r}", fill=self.line_color, font=self.font)
+            
+            m_y = header_h + margin + row_h
+            for match in rounds[r]:
+                self.draw_match_box(draw, col_x, m_y, match)
+                m_y += self.box_h + self.gap_y
                 
-            tx = x + (box_w - tw) / 2
-            ty = y + (box_h - th) / 2 - 2
-            
-            draw.text((tx, ty), name_str, fill=txt_col, font=font)
-            
-            if is_winner:
-                draw.text((x + box_w - 25, ty), "🏆", fill=(255, 255, 255), font=font)
-            
-    return img
+        return img
+
 
 DATA_FILE = "data/brackets.json"
 VALID_TYPES = ['single_elimination', 'double_elimination', 'point_system', 'round_robin', 'swiss']
@@ -142,124 +246,7 @@ TYPE_MAP = {
 
 class Brackets(commands.Cog):
     """Tournament and Bracket management system."""
-
-    def extract_rounds_from_tournament(self, t):
-        """
-        Safely bridges the internal tournament JSON state into a visual rounds array.
-        """
-        players = t.get('players', {})
-
-        def get_name(pid):
-            if pid is None or str(pid).upper() == "BYE": return "BYE"
-            if str(pid) == "TBD": return "TBD"
-
-            # If the pid is actually a full player dictionary
-            if isinstance(pid, dict):
-                return str(pid.get('name', pid.get('username', pid.get('id', 'TBD'))))
-
-            # If players is stored as a dictionary
-            if isinstance(players, dict):
-                p = players.get(str(pid)) or players.get(int(pid) if str(pid).isdigit() else pid)
-                if isinstance(p, dict):
-                    return str(p.get('name', p.get('username', pid)))
-                elif isinstance(p, str):
-                    return p
-
-                # Deep search by ID or seed
-                for k, v in players.items():
-                    if isinstance(v, dict):
-                        if str(v.get('id')) == str(pid) or str(v.get('seed')) == str(pid) or v.get('name') == pid:
-                            return str(v.get('name', pid))
-                    elif str(v) == str(pid):
-                        return str(v)
-
-            # If players is stored as a list
-            elif isinstance(players, list):
-                for p in players:
-                    if isinstance(p, dict):
-                        if str(p.get('id')) == str(pid) or str(p.get('seed')) == str(pid) or p.get('name') == pid:
-                            return str(p.get('name', pid))
-                    elif str(p) == str(pid):
-                        return str(p)
-
-            return str(pid)
-
-        if 'rounds' in t and isinstance(t['rounds'], list) and len(t['rounds']) > 0 and isinstance(t['rounds'][0], list):
-            visual_rounds = []
-            for r in t['rounds']:
-                visual_rounds.append([get_name(p) for p in r])
-            return visual_rounds
-
-        matches = t.get('matches', {})
-
-        # VERY IMPORTANT: Sort matches so the binary tree doesn't cross lines!
-        def sort_key(item):
-            k = item[0] if isinstance(item, tuple) else item.get('id', 0)
-            try: return int(k)
-            except: return str(k)
-
-        if isinstance(matches, dict):
-            match_list = [v for k, v in sorted(matches.items(), key=sort_key)]
-        else:
-            match_list = sorted(matches, key=sort_key)
-
-        if not match_list:
-            return []
-
-        rounds_dict = {}
-        for m in match_list:
-            r = m.get('round', 1)
-            if r not in rounds_dict:
-                rounds_dict[r] = []
-            rounds_dict[r].append(m)
-
-        sorted_round_nums = sorted(list(rounds_dict.keys()))
-        rounds = []
-
-        for r_num in sorted_round_nums:
-            round_players = []
-            for m in rounds_dict[r_num]:
-                p1_id = m.get('p1') or m.get('player1') or m.get('p1_id')
-                p2_id = m.get('p2') or m.get('player2') or m.get('p2_id')
-                round_players.extend([get_name(p1_id), get_name(p2_id)])
-            rounds.append(round_players)
-
-        # Append final winner
-        last_round_matches = rounds_dict.get(sorted_round_nums[-1], [])
-        if len(last_round_matches) == 1:
-            winner_id = last_round_matches[0].get('winner')
-            if winner_id:
-                rounds.append([get_name(winner_id)])
-            elif len(rounds) > 0:
-                rounds.append(["TBD"])
-
-        return rounds
-
-
-    async def send_status_image(self, channel, name, t):
-        """
-        Overwrites the old image generation to use the new pretty UI.
-        """
-        rounds = self.extract_rounds_from_tournament(t)
-
-        img = generate_pretty_bracket_image(rounds)
-
-        if not img:
-            return await channel.send("❌ Bracket does not have enough data to draw yet. (Are there matches generated?)")
-
-        with io.BytesIO() as image_binary:
-            img.save(image_binary, 'PNG')
-            image_binary.seek(0)
-            file = discord.File(fp=image_binary, filename='bracket.png')
-
-            embed = discord.Embed(
-                title=f"🏆 Tournament Bracket: {name}",
-                color=0x5865F2 # Discord Blurple
-            )
-            embed.set_image(url="attachment://bracket.png")
-
-            await channel.send(embed=embed, file=file)
-   
+    
     def __init__(self, bot):
         self.bot = bot
         self.tournaments = {}
@@ -290,17 +277,12 @@ class Brackets(commands.Cog):
     
     @commands.Cog.listener()
     async def on_duel_complete(self, duel_type, winner_id: int, loser_id: int):
-        """
-        Listens for the custom 'duel_complete' event from tle/cogs/duel.py.
-        Updates the brackets and automatically announces the result visually.
-        """
         for name, t in self.tournaments.items():
             if t['state'] != 'active':
                 continue
                 
             match_id_to_resolve = None
             
-            # Find if these two players have a pending match in this bracket
             for mid, m in t.get('matches', {}).items():
                 if m['winner'] is None:
                     participants = [m.get('p1'), m.get('p2')]
@@ -311,7 +293,6 @@ class Brackets(commands.Cog):
             channel_id = t.get('channel_id')
             channel = self.bot.get_channel(channel_id) if channel_id else None
 
-            # Point system doesn't need predefined matches, just general tracking
             if t['type'] == 'point_system':
                 if winner_id in t['players'] and loser_id in t['players']:
                     t.setdefault('scores', {})
@@ -323,7 +304,6 @@ class Brackets(commands.Cog):
                         await self.send_status_image(channel, name, t)
             
             elif match_id_to_resolve is not None:
-                # Process the win and get any unlocked matches
                 new_matches = await self.process_win(name, t, match_id_to_resolve, winner_id)
                 
                 if channel:
@@ -338,7 +318,6 @@ class Brackets(commands.Cog):
     # --- MATCH PROCESSING LOGIC ---
 
     async def process_win(self, name, t, match_id, winner_id):
-        """Core logic to process a win based on the tournament type."""
         t['matches'][str(match_id)]['winner'] = winner_id
         b_type = t['type']
         new_matches = []
@@ -347,12 +326,10 @@ class Brackets(commands.Cog):
             new_matches = self.advance_single_elim(t, int(match_id), winner_id)
         
         elif b_type in ['swiss', 'double_elimination']:
-            # Update scores/losses
             loser_id = t['matches'][str(match_id)]['p1'] if t['matches'][str(match_id)]['p2'] == winner_id else t['matches'][str(match_id)]['p2']
             t['scores'][str(winner_id)]['wins'] += 1
             t['scores'][str(loser_id)]['losses'] += 1
             
-            # Check if round is complete
             if all(m['winner'] is not None for m in t['matches'].values() if m.get('round') == t.get('current_round', 1)):
                 new_matches = self.generate_next_round(t)
         
@@ -365,9 +342,7 @@ class Brackets(commands.Cog):
         return new_matches
 
     def advance_single_elim(self, t, match_id, winner_id):
-        """Advances a winner up the single elimination tree."""
         str_id = str(match_id)
-        
         if match_id == 1:
             t['state'] = 'finished'
             return []
@@ -391,11 +366,7 @@ class Brackets(commands.Cog):
         return []
 
     def generate_next_round(self, t):
-        """Generates the next round for Swiss or Double Elimination."""
-        
-        # Check if Swiss reached its max rounds based on player count
         if t['type'] == 'swiss':
-            # e.g., 8 players = 3 rounds, 16 players = 4 rounds
             max_rounds = max(1, math.ceil(math.log2(len(t['players']))))
             if t.get('current_round', 0) >= max_rounds:
                 t['state'] = 'finished'
@@ -405,17 +376,14 @@ class Brackets(commands.Cog):
         active_players = []
         
         if t['type'] == 'double_elimination':
-            # Filter out players with 2+ losses
             active_players = [int(p) for p, stats in t['scores'].items() if stats['losses'] < 2]
         else:
-            # Swiss
             active_players = [int(p) for p in t['scores'].keys()]
 
         if len(active_players) <= 1:
             t['state'] = 'finished'
             return []
 
-        # Sort by wins (Swiss) or by losses then wins (Double Elim)
         if t['type'] == 'double_elimination':
             active_players.sort(key=lambda x: (t['scores'][str(x)]['losses'], -t['scores'][str(x)]['wins']))
         else:
@@ -424,7 +392,6 @@ class Brackets(commands.Cog):
         new_match_ids = []
         base_idx = len(t.get('matches', {}))
         
-        # Pair up adjacently
         for i in range(0, len(active_players), 2):
             if i + 1 < len(active_players):
                 p1 = active_players[i]
@@ -434,7 +401,6 @@ class Brackets(commands.Cog):
                 new_match_ids.append(mid)
                 base_idx += 1
             else:
-                # Odd man out gets a BYE
                 t['scores'][str(active_players[i])]['wins'] += 1
 
         return new_match_ids
@@ -442,7 +408,6 @@ class Brackets(commands.Cog):
     # --- VISUALS & FORMATTING ---
 
     async def get_image_buffer(self, t):
-        """Asynchronously pre-fetches names and builds the tournament image."""
         names = {}
         for p in t.get('players', []):
             user = self.bot.get_user(int(p))
@@ -452,234 +417,46 @@ class Brackets(commands.Cog):
                 except discord.NotFound:
                     pass
             names[str(p)] = user.display_name if user else f"User {p}"
-        
+            
         names["BYE"] = "BYE"
+        names["TBD"] = "TBD"
 
-        if t['type'] == 'single_elimination':
-            buffer = await self.bot.loop.run_in_executor(None, self.generate_bracket_image, t, names)
-        else:
-            buffer = await self.bot.loop.run_in_executor(None, self.generate_leaderboard_image, t, names)
-            
-        return buffer
-
-    def generate_bracket_image(self, t, names):
-        """Uses Pillow to draw the single elimination bracket tree."""
-        BOX_WIDTH = 220
-        BOX_HEIGHT = 60
-        COL_SPACING = 300
-        ROW_SPACING = 100
-
-        N = len(t['matches']) + 1
-        D = int(math.log2(N))
-
-        img_width = D * COL_SPACING + 50
-        img_height = (N // 2) * ROW_SPACING + 50
-        
-        image = Image.new('RGB', (img_width, img_height), (44, 47, 51))
-        draw = ImageDraw.Draw(image)
-
-        font_path = os.path.join('tle', 'assets', 'fonts', 'NotoSans-Bold.ttf')
-        try:
-            font = ImageFont.truetype(font_path, 16)
-        except IOError:
-            font = ImageFont.load_default()
-
-        Y = {}
-        for i in range(N // 2):
-            Y[(N // 2) + i] = i * ROW_SPACING + 25
-
-        for x in range(N // 2 - 1, 0, -1):
-            Y[x] = (Y[2*x] + Y[2*x + 1]) / 2
-
-        X = {}
-        for x in range(1, N):
-            d = int(math.log2(x))
-            X[x] = (D - 1 - d) * COL_SPACING + 25
-
-        for x in range(2, N):
-            parent = x // 2
-            startX = X[x] + BOX_WIDTH
-            startY = Y[x] + BOX_HEIGHT // 2
-            endX = X[parent]
-            endY = Y[parent] + BOX_HEIGHT // 2
-            midX = startX + (endX - startX) // 2
-
-            draw.line([(startX, startY), (midX, startY)], fill=(114, 137, 218), width=3)
-            draw.line([(midX, startY), (midX, endY)], fill=(114, 137, 218), width=3)
-            draw.line([(midX, endY), (endX, endY)], fill=(114, 137, 218), width=3)
-
-        for x in range(1, N):
-            match = t['matches'][str(x)]
-            x_pos = X[x]
-            y_pos = Y[x]
-
-            draw.rectangle([x_pos, y_pos, x_pos + BOX_WIDTH, y_pos + BOX_HEIGHT], fill=(35, 39, 42), outline=(153, 170, 181), width=2)
-            draw.line([(x_pos, y_pos + BOX_HEIGHT//2), (x_pos + BOX_WIDTH, y_pos + BOX_HEIGHT//2)], fill=(153, 170, 181), width=1)
-
-            def get_name(user_id):
-                if user_id is None: return "TBD"
-                return names.get(str(user_id), f"User {user_id}")
-
-            p1_name = get_name(match.get('p1'))
-            p2_name = get_name(match.get('p2'))
-
-            color1 = (255, 255, 255)
-            color2 = (255, 255, 255)
-            if match.get('winner') == match.get('p1') and match.get('p1') not in (None, 'BYE'):
-                color1 = (67, 181, 129)
-            elif match.get('winner') == match.get('p2') and match.get('p2') not in (None, 'BYE'):
-                color2 = (67, 181, 129)
-
-            draw.text((x_pos + 10, y_pos + 5), p1_name, fill=color1, font=font)
-            draw.text((x_pos + 10, y_pos + BOX_HEIGHT//2 + 5), p2_name, fill=color2, font=font)
-
-        buffer = io.BytesIO()
-        image.save(buffer, format='PNG')
-        buffer.seek(0)
-        return buffer
-
-    def generate_leaderboard_image(self, t, names):
-        """Uses Pillow to draw a beautiful visual leaderboard for non-elimination types."""
-        b_type = t['type']
-        scores = t.get('scores', {})
-        
-        # Sort players logically
-        if b_type in ['point_system', 'round_robin']:
-            sorted_players = sorted(t['players'], key=lambda p: scores.get(str(p), 0), reverse=True)
-        else:
-            sorted_players = sorted(t['players'], key=lambda p: (scores.get(str(p), {}).get('wins', 0), -scores.get(str(p), {}).get('losses', 0)), reverse=True)
-
-        # Collect Pending matches
-        current_round = t.get('current_round')
-        pending_matches = []
-        for mid, m in t.get('matches', {}).items():
-            if m.get('winner') is None:
-                if current_round and m.get('round') != current_round:
-                    continue
-                pending_matches.append(m)
-
-        # Dimension Constants
-        row_height = 45
-        header_height = 80
-        margin = 30
-        num_players = len(sorted_players)
-        matches_height = (len(pending_matches) + 1) * row_height if pending_matches else 0
-
-        img_width = 850
-        img_height = header_height + (num_players + 2) * row_height + matches_height + margin * 2
-
-        image = Image.new('RGB', (img_width, img_height), (44, 47, 51))
-        draw = ImageDraw.Draw(image)
-
-        # Fonts Setup
-        font_path = os.path.join('tle', 'assets', 'fonts', 'NotoSans-Bold.ttf')
-        try:
-            title_font = ImageFont.truetype(font_path, 28)
-            header_font = ImageFont.truetype(font_path, 20)
-            font = ImageFont.truetype(font_path, 18)
-        except IOError:
-            title_font = ImageFont.load_default()
-            header_font = ImageFont.load_default()
-            font = ImageFont.load_default()
-
-        # 1. Header Area
-        draw.rectangle([0, 0, img_width, header_height], fill=(114, 137, 218))
-        draw.text((margin, 22), f"{t['name']} — {b_type.replace('_', ' ').title()}", fill=(255, 255, 255), font=title_font)
-
-        # 2. Table Headers
-        y_offset = header_height + margin
-        draw.text((margin, y_offset), "Rank", fill=(153, 170, 181), font=header_font)
-        draw.text((margin + 120, y_offset), "Player", fill=(153, 170, 181), font=header_font)
-        draw.text((margin + 550, y_offset), "Score / Record", fill=(153, 170, 181), font=header_font)
-        if b_type == 'double_elimination':
-            draw.text((margin + 720, y_offset), "Status", fill=(153, 170, 181), font=header_font)
-
-        y_offset += row_height
-
-        # 3. Player Rows
-        for i, p in enumerate(sorted_players, 1):
-            bg_color = (35, 39, 42) if i % 2 == 0 else (44, 47, 51)
-            draw.rectangle([margin, y_offset, img_width - margin, y_offset + row_height], fill=bg_color)
-
-            name_str = names.get(str(p), f"User {p}")
-            
-            # Text Fields
-            draw.text((margin + 10, y_offset + 10), f"#{i}", fill=(255, 255, 255), font=font)
-            draw.text((margin + 120, y_offset + 10), name_str, fill=(255, 255, 255), font=font)
-
-            if b_type in ['point_system', 'round_robin']:
-                score_str = f"{scores.get(str(p), 0)} pts"
+        def render():
+            renderer = BracketRenderer(t, names)
+            if t.get('type') == 'single_elimination':
+                img = renderer.draw_single_elim()
             else:
-                stats = scores.get(str(p), {'wins': 0, 'losses': 0})
-                score_str = f"{stats['wins']} W / {stats['losses']} L"
-
-            draw.text((margin + 550, y_offset + 10), score_str, fill=(67, 181, 129), font=font)
-
-            if b_type == 'double_elimination':
-                losses = scores.get(str(p), {}).get('losses', 0)
-                status = "Eliminated" if losses >= 2 else "Active"
-                color = (240, 71, 71) if losses >= 2 else (67, 181, 129)
-                draw.text((margin + 720, y_offset + 10), status, fill=color, font=font)
-
-            y_offset += row_height
-
-        # 4. Pending Matches Section
-        if pending_matches:
-            y_offset += margin // 2
-            match_title = f"Pending Matches (Round {current_round})" if current_round else "Pending Matches"
-            draw.text((margin, y_offset), match_title, fill=(114, 137, 218), font=header_font)
-            y_offset += int(row_height * 0.8)
-
-            for m in pending_matches:
-                p1_str = names.get(str(m['p1']), f"User {m['p1']}")
-                p2_str = names.get(str(m['p2']), f"User {m['p2']}")
+                img = renderer.draw_standings_dashboard()
                 
-                # Match line formatting
-                draw.text((margin + 10, y_offset), f"{p1_str}  vs  {p2_str}", fill=(255, 255, 255), font=font)
-                y_offset += int(row_height * 0.75)
+            if not img:
+                img = Image.new('RGB', (400, 100), (43, 45, 49))
+                d = ImageDraw.Draw(img)
+                font = ImageFont.load_default()
+                d.text((20, 40), "Not enough data to draw bracket.", fill=(255,255,255), font=font)
 
-        buffer = io.BytesIO()
-        image.save(buffer, format='PNG')
-        buffer.seek(0)
-        return buffer
+            buffer = io.BytesIO()
+            img.save(buffer, format='PNG')
+            buffer.seek(0)
+            return buffer
+            
+        return await self.bot.loop.run_in_executor(None, render)
 
     async def send_status_image(self, channel, name, t):
-        """
-        Overwrites the old image generation to use the new pretty UI.
-        """
-        # 1. You will need to extract your tournament matches into a list of rounds.
-        # Because I don't know the exact structure of `t['matches']`, you might 
-        # need to adjust this list comprehension to fit your data structure!
-        
-        # EXAMPLE of what `rounds` needs to look like:
-        # rounds = [["Alice", "Bob", "Charlie", "Dave"], ["Alice", "Dave"], ["Alice"]]
-        
-        # PLACEHOLDER: Replace this with your logic to grab current rounds from `t`
-        rounds = self.extract_rounds_from_tournament(t) 
-        
-        # 2. Generate the sleek new image
-        img = generate_pretty_bracket_image(rounds)
-        
-        if not img:
-            await channel.send("❌ Bracket does not have enough data to draw yet.")
+        if t['state'] == 'registering':
+            await channel.send(f"Bracket `{name}` is registering. Players: {len(t['players'])}")
             return
-
-        # 3. Save it to binary stream and send it via a Discord embed
-        with io.BytesIO() as image_binary:
-            img.save(image_binary, 'PNG')
-            image_binary.seek(0)
-            file = discord.File(fp=image_binary, filename='bracket.png')
             
-            embed = discord.Embed(
-                title=f"🏆 Tournament Bracket: {name}", 
-                color=0x5865F2 # Discord Blurple
-            )
-            embed.set_image(url="attachment://bracket.png")
-            
-            await channel.send(embed=embed, file=file)
+        buffer = await self.get_image_buffer(t)
+        file = discord.File(fp=buffer, filename='bracket.png')
+        
+        embed = discord.Embed(
+            title=f"🏆 Tournament: {name}",
+            color=0x5865F2
+        )
+        embed.set_image(url="attachment://bracket.png")
+        await channel.send(embed=embed, file=file)
 
     async def announce_matches(self, ctx_or_channel, t, match_ids):
-        """Pings the players who are paired up."""
         for mid in match_ids:
             match = t['matches'][str(mid)]
             if match.get('p1') not in (None, 'BYE') and match.get('p2') not in (None, 'BYE'):
@@ -689,37 +466,18 @@ class Brackets(commands.Cog):
 
     @commands.group(brief='Tournament bracket commands', invoke_without_command=True)
     async def bracket(self, ctx):
-        """
-        Main command group for managing tournaments and brackets.
-        
-        Use `;help bracket <subcommand>` for more info on a specific command.
-        """
         await ctx.send_help(ctx.command)
 
     @bracket.command(brief='Create a new bracket.')
     async def create(self, ctx, name: str, b_type: str = 'single_elimination', *managers: discord.Member):
-        """
-        Creates a new tournament bracket.
-        
-        <name>: The name of the bracket (use quotes if it contains spaces).
-        <b_type>: The type of the tournament.
-                  Valid options: 
-                  1 or single_elimination
-                  2 or double_elimination
-                  3 or point_system
-                  4 or round_robin
-                  5 or swiss
-        [managers]: (Optional) Mention users to give them admin rights over the bracket.
-        """
         if name in self.tournaments:
             return await ctx.send(f"❌ Bracket `{name}` already exists!")
         
-        # Map number shortcuts to the full name
         if b_type in TYPE_MAP:
             b_type = TYPE_MAP[b_type]
             
         if b_type not in VALID_TYPES:
-            return await ctx.send("❌ Invalid type. Valid types/numbers:\n`1` Single Elim\n`2` Double Elim\n`3` Point System\n`4` Round Robin\n`5` Swiss")
+            return await ctx.send("❌ Invalid type. Valid types:\n`1` Single Elim\n`2` Double Elim\n`3` Point System\n`4` Round Robin\n`5` Swiss")
             
         manager_ids = [ctx.author.id] + [m.id for m in managers]
         self.tournaments[name] = {
@@ -729,16 +487,13 @@ class Brackets(commands.Cog):
             'managers': list(set(manager_ids)),
             'players': [],
             'matches': {},
-            'channel_id': ctx.channel.id # Bind to current channel for live updates
+            'channel_id': ctx.channel.id
         }
         self.save_data()
         await ctx.send(f"✅ Created {b_type.replace('_', ' ')} bracket `{name}`. Type `;bracket register \"{name}\"` to join!")
 
     @bracket.command(brief='List all brackets and their status.')
     async def list(self, ctx):
-        """
-        Shows a list of all existing brackets, their types, and whether they are finished.
-        """
         if not self.tournaments:
             return await ctx.send("No brackets currently exist. Create one with `;bracket create`!")
 
@@ -760,11 +515,6 @@ class Brackets(commands.Cog):
 
     @bracket.command(brief='Delete a bracket entirely.')
     async def delete(self, ctx, name: str):
-        """
-        Deletes an existing bracket.
-        
-        Requires you to be a server administrator or a designated manager for this bracket.
-        """
         t = self.tournaments.get(name)
         if not t: return await ctx.send("❌ Bracket not found.")
         if not self.is_manager(ctx, t): return await ctx.send("❌ Only managers can delete the bracket.")
@@ -775,12 +525,6 @@ class Brackets(commands.Cog):
 
     @bracket.command(brief='Add new managers to an existing bracket.')
     async def addmanager(self, ctx, name: str, *new_managers: discord.Member):
-        """
-        Adds new managers to a bracket.
-        
-        <name>: The name of the bracket (use quotes if it contains spaces).
-        [new_managers...]: Mention the users you want to add as managers.
-        """
         t = self.tournaments.get(name)
         if not t: return await ctx.send("❌ Bracket not found.")
         if not self.is_manager(ctx, t): return await ctx.send("❌ Only existing managers can add new managers.")
@@ -805,11 +549,6 @@ class Brackets(commands.Cog):
 
     @bracket.command(brief='Register for a bracket.')
     async def register(self, ctx, name: str):
-        """
-        Registers you for an upcoming bracket.
-        
-        The bracket must be in the 'registering' state (not yet started).
-        """
         t = self.tournaments.get(name)
         if not t: return await ctx.send("❌ Bracket not found.")
         if t['state'] != 'registering': return await ctx.send("❌ Registration is closed.")
@@ -821,12 +560,6 @@ class Brackets(commands.Cog):
 
     @bracket.command(brief='Unregister a user from a bracket.')
     async def unregister(self, ctx, name: str, user: discord.Member = None):
-        """
-        Removes a user from a bracket.
-        
-        You can use this to remove yourself.
-        Managers can mention another [user] to remove them forcefully.
-        """
         t = self.tournaments.get(name)
         if not t: return await ctx.send("❌ Bracket not found.")
         
@@ -843,20 +576,13 @@ class Brackets(commands.Cog):
 
     @bracket.command(brief='Starts the bracket.')
     async def start(self, ctx, name: str):
-        """
-        Closes registration and starts the bracket.
-        
-        Requires you to be a bracket manager. 
-        Depending on the bracket type, this will randomize seeds, 
-        generate matches, pad with BYEs, and announce the first round!
-        """
         t = self.tournaments.get(name)
         if not t: return await ctx.send("❌ Bracket not found.")
         if not self.is_manager(ctx, t): return await ctx.send("❌ Only managers can start the bracket.")
         if t['state'] != 'registering': return await ctx.send("❌ Bracket is already started.")
         if len(t['players']) < 2: return await ctx.send("❌ Need at least 2 players to start.")
 
-        t['channel_id'] = ctx.channel.id # Rebind to channel where it was started
+        t['channel_id'] = ctx.channel.id
 
         players = t['players'].copy()
         random.shuffle(players)
@@ -906,13 +632,6 @@ class Brackets(commands.Cog):
 
     @bracket.command(brief='Manually report the winner of a match.')
     async def report(self, ctx, name: str, winner: discord.Member):
-        """
-        Manually forces a win for a specific player.
-        
-        Requires you to be a manager. It will automatically find 
-        the active pending match for that player and advance them.
-        *Note: Standard TLE duels will automatically report scores!*
-        """
         t = self.tournaments.get(name)
         if not t: return await ctx.send("❌ Bracket not found.")
         if not self.is_manager(ctx, t): return await ctx.send("❌ Only managers can manually report scores.")
@@ -926,12 +645,10 @@ class Brackets(commands.Cog):
             await ctx.send(f"✅ Added 1 point for **{winner.display_name}**!")
             return await self.send_status_image(ctx.channel, name, t)
 
-        # Find the active match containing the winner for other types
         active_match = None
         current_round = t.get('current_round')
         for mid, m in t['matches'].items():
             if m['winner'] is None and winner.id in (m.get('p1'), m.get('p2')):
-                # For round-based, only allow reporting current round matches
                 if current_round and m.get('round') != current_round:
                     continue
                 active_match = mid
@@ -952,21 +669,12 @@ class Brackets(commands.Cog):
 
     @bracket.command(brief='Show current bracket image or leaderboard.')
     async def status(self, ctx, name: str):
-        """
-        Displays the current visual status of the bracket.
-        
-        Generates a graphical bracket tree for Single Elimination, 
-        or an embedded leaderboard/standings page for other types.
-        """
         t = self.tournaments.get(name)
         if not t: return await ctx.send("❌ Bracket not found.")
         
         t['channel_id'] = ctx.channel.id
         self.save_data()
         
-        if t['state'] == 'registering':
-            return await ctx.send(f"Bracket `{name}` is registering. Players: {len(t['players'])}")
-
         await self.send_status_image(ctx.channel, name, t)
 
 async def setup(bot):
