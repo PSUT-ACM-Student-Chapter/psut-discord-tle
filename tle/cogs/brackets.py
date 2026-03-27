@@ -525,39 +525,39 @@ class Brackets(commands.Cog):
         return buffer
 
     async def send_status_image(self, channel, name, t):
-    """
-    Overwrites the old image generation to use the new pretty UI.
-    """
-    # 1. You will need to extract your tournament matches into a list of rounds.
-    # Because I don't know the exact structure of `t['matches']`, you might 
-    # need to adjust this list comprehension to fit your data structure!
-    
-    # EXAMPLE of what `rounds` needs to look like:
-    # rounds = [["Alice", "Bob", "Charlie", "Dave"], ["Alice", "Dave"], ["Alice"]]
-    
-    # PLACEHOLDER: Replace this with your logic to grab current rounds from `t`
-    rounds = self.extract_rounds_from_tournament(t) 
-    
-    # 2. Generate the sleek new image
-    img = generate_pretty_bracket_image(rounds)
-    
-    if not img:
-        await channel.send("❌ Bracket does not have enough data to draw yet.")
-        return
+        """
+        Overwrites the old image generation to use the new pretty UI.
+        """
+        # 1. You will need to extract your tournament matches into a list of rounds.
+        # Because I don't know the exact structure of `t['matches']`, you might 
+        # need to adjust this list comprehension to fit your data structure!
+        
+        # EXAMPLE of what `rounds` needs to look like:
+        # rounds = [["Alice", "Bob", "Charlie", "Dave"], ["Alice", "Dave"], ["Alice"]]
+        
+        # PLACEHOLDER: Replace this with your logic to grab current rounds from `t`
+        rounds = self.extract_rounds_from_tournament(t) 
+        
+        # 2. Generate the sleek new image
+        img = generate_pretty_bracket_image(rounds)
+        
+        if not img:
+            await channel.send("❌ Bracket does not have enough data to draw yet.")
+            return
 
-    # 3. Save it to binary stream and send it via a Discord embed
-    with io.BytesIO() as image_binary:
-        img.save(image_binary, 'PNG')
-        image_binary.seek(0)
-        file = discord.File(fp=image_binary, filename='bracket.png')
-        
-        embed = discord.Embed(
-            title=f"🏆 Tournament Bracket: {name}", 
-            color=0x5865F2 # Discord Blurple
-        )
-        embed.set_image(url="attachment://bracket.png")
-        
-        await channel.send(embed=embed, file=file)
+        # 3. Save it to binary stream and send it via a Discord embed
+        with io.BytesIO() as image_binary:
+            img.save(image_binary, 'PNG')
+            image_binary.seek(0)
+            file = discord.File(fp=image_binary, filename='bracket.png')
+            
+            embed = discord.Embed(
+                title=f"🏆 Tournament Bracket: {name}", 
+                color=0x5865F2 # Discord Blurple
+            )
+            embed.set_image(url="attachment://bracket.png")
+            
+            await channel.send(embed=embed, file=file)
 
     async def announce_matches(self, ctx_or_channel, t, match_ids):
         """Pings the players who are paired up."""
