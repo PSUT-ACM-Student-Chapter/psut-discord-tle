@@ -511,10 +511,12 @@ class UserDbConn:
         return int(res[0]) if res else None
 
     def remove_handle(self, user_id, guild_id):
+        # We ignore guild_id here so that handles saved under 
+        # old specific server IDs are still successfully deleted.
         res = self.conn.execute('''
             DELETE FROM user_handle
-            WHERE user_id = ? AND guild_id = ?
-        ''', (user_id, guild_id))
+            WHERE user_id = ?
+        ''', (user_id,))
         self.conn.commit()
         return res.rowcount
 
