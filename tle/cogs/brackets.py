@@ -12,14 +12,6 @@ from PIL import Image, ImageDraw, ImageFont
 def generate_pretty_bracket_image(rounds):
     """
     Generates a beautiful, Discord-themed bracket image using PIL.
-    
-    `rounds` should be a list of lists containing player names.
-    Example:
-    [
-        ["Alice", "Bob", "Charlie", "Dave"],  # Round 1
-        ["Alice", "Dave"],                    # Round 2
-        ["Alice"]                             # Winner
-    ]
     """
     # UI Configuration
     box_w, box_h = 160, 40
@@ -140,6 +132,94 @@ TYPE_MAP = {
 
 class Brackets(commands.Cog):
     """Tournament and Bracket management system."""
+
+    def extract_rounds_from_tournament(self, t):
+        """
+        Safely bridges the internal tournament JSON state into a visual rounds array.
+        """
+        players = t.get('players', {})
+
+        def get_name(pid):
+            if not pid: return "TBD"
+            if isinstance(players, dict):
+                p = players.get(str(pid)) or players.get(int(pid))
+                if isinstance(p, dict):
+                    return p.get('name', str(pid))
+                if isinstance(p, str):
+                    return p
+            elif isinstance(players, list):
+                for p in players:
+                    if isinstance(p, dict) and (p.get('id') == pid or p.get('name') == pid):
+                        return p.get('name', str(pid))
+            return str(pid)
+
+        # 1. If 'rounds' already natively exists in the data
+        if 'rounds' in t and isinstance(t['rounds'], list) and len(t['rounds']) > 0 and isinstance(t['rounds'][0], list):
+            return t['rounds']
+
+        # 2. Extract and construct rounds from 'matches'
+        matches = t.get('matches', {})
+        match_list = list(matches.values()) if isinstance(matches, dict) else matches
+
+        if not match_list:
+            return []
+
+        # Group by round number
+        rounds_dict = {}
+        for m in match_list:
+            r = m.get('round', 1)
+            if r not in rounds_dict:
+                rounds_dict[r] = []
+            rounds_dict[r].append(m)
+
+        sorted_round_nums = sorted(list(rounds_dict.keys()))
+        rounds = []
+
+        for r_num in sorted_round_nums:
+            round_players = []
+            r_matches = rounds_dict[r_num]
+
+            for m in r_matches:
+                # Try standard keys that tournaments use for participants
+                p1_id = m.get('p1') or m.get('player1') or m.get('p1_id')
+                p2_id = m.get('p2') or m.get('player2') or m.get('p2_id')
+                round_players.extend([get_name(p1_id), get_name(p2_id)])
+
+            rounds.append(round_players)
+
+        # 3. Find the final winner
+        last_round_matches = rounds_dict.get(sorted_round_nums[-1], [])
+        if len(last_round_matches) == 1:
+            winner_id = last_round_matches[0].get('winner')
+            if winner_id:
+                rounds.append([get_name(winner_id)])
+
+        return rounds
+
+
+    async def send_status_image(self, channel, name, t):
+        """
+        Overwrites the old image generation to use the new pretty UI.
+        """
+        rounds = self.extract_rounds_from_tournament(t)
+
+        img = generate_pretty_bracket_image(rounds)
+
+        if not img:
+            return await channel.send("❌ Bracket does not have enough data to draw yet. (Are there matches generated?)")
+
+        with io.BytesIO() as image_binary:
+            img.save(image_binary, 'PNG')
+            image_binary.seek(0)
+            file = discord.File(fp=image_binary, filename='bracket.png')
+
+            embed = discord.Embed(
+                title=f"🏆 Tournament Bracket: {name}",
+                color=0x5865F2 # Discord Blurple
+            )
+            embed.set_image(url="attachment://bracket.png")
+
+            await channel.send(embed=embed, file=file)
     
     def __init__(self, bot):
         self.bot = bot
