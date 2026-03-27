@@ -97,7 +97,7 @@ def complete_duel(bot, duel_data, guild_id, win_status, winner, loser, finish_ti
         duelid, guild_id, win_status, finish_time, winner_id, loser_id, delta, dtype)
     
     if win_status != Winner.DRAW:
-        bot.dispatch("duel_complete", winner_id, loser_id)
+        bot.dispatch("duel_complete", duelid, winner_id, loser_id)
         
     if rc == 0:
         raise DuelCogError('Hey! No cheating!')
