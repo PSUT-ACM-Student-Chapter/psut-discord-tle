@@ -9,6 +9,125 @@ import discord
 from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont
 
+def generate_pretty_bracket_image(rounds):
+    """
+    Generates a beautiful, Discord-themed bracket image using PIL.
+    
+    `rounds` should be a list of lists containing player names.
+    Example:
+    [
+        ["Alice", "Bob", "Charlie", "Dave"],  # Round 1
+        ["Alice", "Dave"],                    # Round 2
+        ["Alice"]                             # Winner
+    ]
+    """
+    # UI Configuration
+    box_w, box_h = 160, 40
+    h_gap, v_gap = 60, 20
+    
+    R = len(rounds)
+    if R == 0:
+        return None
+        
+    # Calculate total image size dynamically
+    img_w = R * (box_w + h_gap) + 20
+    img_h = len(rounds[0]) * (box_h + v_gap) + 40
+    
+    # Create image with Discord's dark background color
+    img = Image.new('RGB', (img_w, img_h), color=(49, 51, 56)) 
+    draw = ImageDraw.Draw(img)
+    
+    # Attempt to load TLE's default fonts, fallback to default if missing
+    try:
+        font = ImageFont.truetype("tle/assets/fonts/NotoSans-Bold.ttf", 15)
+    except:
+        font = ImageFont.load_default()
+        
+    pos = {} # Stores the center-right coordinates of each box for drawing lines
+    
+    for r in range(R):
+        x = 20 + r * (box_w + h_gap)
+        
+        for i, name in enumerate(rounds[r]):
+            name_str = str(name) if name else "TBD"
+            is_tbd = name_str in ("TBD", "???", "None", "BYE")
+            is_winner = (r == R - 1 and not is_tbd)
+            
+            # Calculate Y position
+            if r == 0:
+                y = 20 + i * (box_h + v_gap)
+            else:
+                # Center vertically between the two "parent" boxes from the previous round
+                try:
+                    p1_y = pos[(r-1, i*2)][1]
+                    p2_y = pos[(r-1, i*2+1)][1]
+                    y = (p1_y + p2_y) / 2 - box_h / 2
+                except KeyError:
+                    # Fallback if the bracket layout isn't a perfect power of 2
+                    y = 20 + i * (box_h + v_gap) * (2 ** r)
+                    
+            # Save center-right coordinate to connect to the next round
+            pos[(r, i)] = (x + box_w, y + box_h / 2)
+            
+            # 1. Draw connecting lines to the previous round
+            if r > 0:
+                try:
+                    px1, py1 = pos[(r-1, i*2)]
+                    px2, py2 = pos[(r-1, i*2+1)]
+                    mid_x = px1 + (x - px1) / 2
+                    
+                    line_col = (88, 101, 242) # Discord Blurple
+                    
+                    # Draw the branching lines
+                    draw.line([(px1, py1), (mid_x, py1)], fill=line_col, width=2)
+                    draw.line([(px2, py2), (mid_x, py2)], fill=line_col, width=2)
+                    draw.line([(mid_x, py1), (mid_x, py2)], fill=line_col, width=2)
+                    draw.line([(mid_x, y + box_h / 2), (x, y + box_h / 2)], fill=line_col, width=2)
+                except KeyError:
+                    pass
+            
+            # 2. Draw the Match Box
+            fill_col = (43, 45, 49) # Discord darker secondary background
+            
+            # Outline color logic (Green for winner, Blurple for normal, Dark Gray for TBD)
+            if is_winner:
+                out_col = (87, 242, 135) 
+            elif is_tbd:
+                out_col = (30, 31, 34)
+            else:
+                out_col = (88, 101, 242)
+            
+            try:
+                # Requires Pillow >= 8.2.0
+                draw.rounded_rectangle([x, y, x+box_w, y+box_h], radius=6, fill=fill_col, outline=out_col, width=2)
+            except AttributeError:
+                # Fallback for older Pillow versions
+                draw.rectangle([x, y, x+box_w, y+box_h], fill=fill_col, outline=out_col, width=2)
+                
+            # 3. Draw the Player Name
+            txt_col = (255, 255, 255) if not is_tbd else (128, 132, 142)
+            
+            # Get text dimensions to center it perfectly
+            if hasattr(font, 'getbbox'):
+                bbox = font.getbbox(name_str)
+                tw = bbox[2] - bbox[0]
+                th = bbox[3] - bbox[1]
+            elif hasattr(draw, 'textsize'):
+                tw, th = draw.textsize(name_str, font=font)
+            else:
+                tw, th = len(name_str) * 8, 15
+                
+            tx = x + (box_w - tw) / 2
+            ty = y + (box_h - th) / 2 - 2
+            
+            draw.text((tx, ty), name_str, fill=txt_col, font=font)
+            
+            # Add a little trophy to the final winner
+            if is_winner:
+                draw.text((x + box_w - 25, ty), "🏆", fill=(255, 255, 255), font=font)
+            
+    return img
+
 DATA_FILE = "data/brackets.json"
 VALID_TYPES = ['single_elimination', 'double_elimination', 'point_system', 'round_robin', 'swiss']
 TYPE_MAP = {
@@ -405,13 +524,40 @@ class Brackets(commands.Cog):
         buffer.seek(0)
         return buffer
 
-    async def send_status_image(self, target_channel, name, t):
-        """Helper to seamlessly generate and send the visual bracket/leaderboard."""
-        buffer = await self.get_image_buffer(t)
-        file = discord.File(buffer, filename="bracket.png")
-        embed = discord.Embed(title=f"Bracket: {name} ({t['state'].upper()})", color=0x7289da)
+    async def send_status_image(self, channel, name, t):
+    """
+    Overwrites the old image generation to use the new pretty UI.
+    """
+    # 1. You will need to extract your tournament matches into a list of rounds.
+    # Because I don't know the exact structure of `t['matches']`, you might 
+    # need to adjust this list comprehension to fit your data structure!
+    
+    # EXAMPLE of what `rounds` needs to look like:
+    # rounds = [["Alice", "Bob", "Charlie", "Dave"], ["Alice", "Dave"], ["Alice"]]
+    
+    # PLACEHOLDER: Replace this with your logic to grab current rounds from `t`
+    rounds = self.extract_rounds_from_tournament(t) 
+    
+    # 2. Generate the sleek new image
+    img = generate_pretty_bracket_image(rounds)
+    
+    if not img:
+        await channel.send("❌ Bracket does not have enough data to draw yet.")
+        return
+
+    # 3. Save it to binary stream and send it via a Discord embed
+    with io.BytesIO() as image_binary:
+        img.save(image_binary, 'PNG')
+        image_binary.seek(0)
+        file = discord.File(fp=image_binary, filename='bracket.png')
+        
+        embed = discord.Embed(
+            title=f"🏆 Tournament Bracket: {name}", 
+            color=0x5865F2 # Discord Blurple
+        )
         embed.set_image(url="attachment://bracket.png")
-        await target_channel.send(embed=embed, file=file)
+        
+        await channel.send(embed=embed, file=file)
 
     async def announce_matches(self, ctx_or_channel, t, match_ids):
         """Pings the players who are paired up."""
