@@ -16,6 +16,7 @@ from matplotlib import pyplot as plt
 from tle import constants
 from tle.util import codeforces_common as cf_common
 from tle.util import discord_common, font_downloader
+import tle.pxl_alias  # Injects Pxl role as Admin
 
 # --- DISABLE SLASH COMMANDS (USE PREFIX ONLY) ---
 # The bot is configured to only use prefix commands (like ;cf profile).
