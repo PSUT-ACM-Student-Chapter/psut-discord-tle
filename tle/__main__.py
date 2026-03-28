@@ -32,7 +32,7 @@ commands.hybrid_group = commands.group
 class TLEBot(commands.Bot):
     async def close(self):
         # Fetch the channel ID from the environment variable
-        channel_id_str = os.environ.get('CHANNEL_ID')
+        channel_id_str = os.environ.get('announcement')
         
         if channel_id_str and channel_id_str.isdigit():
             channel_id = int(channel_id_str)
@@ -59,7 +59,7 @@ class TLEBot(commands.Bot):
                 except Exception as e:
                     logging.error(f"Failed to send restart message: {e}")
         else:
-            logging.warning("CHANNEL_ID is not set or invalid. Skipping restart message.")
+            logging.warning("announcement is not set or invalid. Skipping restart message.")
         
         # Proceed with the actual shutdown process
         await super().close()
