@@ -13,25 +13,6 @@ class FirstBlood(commands.Cog):
         self.bot = bot
         self.logger = logging.getLogger(self.__class__.__name__)
         
-        # Table to store which channels are tracking which contests
-        cf_common.user_db.conn.execute('''
-            CREATE TABLE IF NOT EXISTS first_blood_monitors (
-                channel_id TEXT,
-                contest_id INTEGER,
-                PRIMARY KEY (channel_id, contest_id)
-            )
-        ''')
-        # Table to store the known first bloods so we don't repeat them on bot restarts
-        cf_common.user_db.conn.execute('''
-            CREATE TABLE IF NOT EXISTS first_blood_winners (
-                contest_id INTEGER,
-                problem_index TEXT,
-                handle TEXT,
-                PRIMARY KEY (contest_id, problem_index)
-            )
-        ''')
-        cf_common.user_db.conn.commit()
-
         # Start the background checker
         self.monitor_task.start()
 
@@ -251,6 +232,25 @@ class FirstBlood(commands.Cog):
     @monitor_task.before_loop
     async def before_monitor_task(self):
         await self.bot.wait_until_ready()
+        
+        # Table to store which channels are tracking which contests
+        cf_common.user_db.conn.execute('''
+            CREATE TABLE IF NOT EXISTS first_blood_monitors (
+                channel_id TEXT,
+                contest_id INTEGER,
+                PRIMARY KEY (channel_id, contest_id)
+            )
+        ''')
+        # Table to store the known first bloods so we don't repeat them on bot restarts
+        cf_common.user_db.conn.execute('''
+            CREATE TABLE IF NOT EXISTS first_blood_winners (
+                contest_id INTEGER,
+                problem_index TEXT,
+                handle TEXT,
+                PRIMARY KEY (contest_id, problem_index)
+            )
+        ''')
+        cf_common.user_db.conn.commit()
 
 async def setup(bot):
     await bot.add_cog(FirstBlood(bot))
