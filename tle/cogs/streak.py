@@ -33,29 +33,8 @@ class Streaks(commands.Cog):
     def cog_unload(self):
         self.update_streaks_task.cancel()
 
-    @tasks.loop(time=datetime.time(hour=0, minute=0, tzinfo=datetime.timezone.utc))
-    async def update_streaks_task(self):
-        """Runs daily at midnight UTC to process streaks and badges for all registered users."""
-        self.logger.info("Starting daily streak & badge background update...")
-        try:
-            users = cf_common.user_db.conn.execute(
-                "SELECT DISTINCT user_id, handle FROM user_handle"
-            ).fetchall()
-        except Exception as e:
-            self.logger.error(f"Failed to fetch users from DB: {e}")
-            return
-
-        for user_id_int, handle in users:
-            await self._update_user_streak(user_id_int, handle)
-            await asyncio.sleep(0.5) # Prevent rate-limiting from Codeforces API
-
-        self.logger.info("Daily streak & badge update completed successfully.")
-
-    @update_streaks_task.before_loop
-    async def before_update_streaks_task(self):
-        await self.bot.wait_until_ready()
-        
-        # Safely initialize the new tables here once the bot (and DB) is fully ready!
+    def _ensure_tables(self):
+        """Safely creates tables if they don't exist yet right before they are needed."""
         cf_common.user_db.conn.execute('''
             CREATE TABLE IF NOT EXISTS user_streak (
                 user_id TEXT PRIMARY KEY,
@@ -75,8 +54,33 @@ class Streaks(commands.Cog):
         ''')
         cf_common.user_db.conn.commit()
 
-    async def _update_user_streak(self, user_id_int, handle):
+    @tasks.loop(time=datetime.time(hour=0, minute=0, tzinfo=datetime.timezone.utc))
+    async def update_streaks_task(self):
+        """Runs daily at midnight UTC to process streaks and badges for all registered users."""
+        self.logger.info("Starting daily streak & badge background update...")
+        self._ensure_tables()
+        try:
+            users = cf_common.user_db.conn.execute(
+                "SELECT DISTINCT user_id, handle FROM user_handle"
+            ).fetchall()
+        except Exception as e:
+            self.logger.error(f"Failed to fetch users from DB: {e}")
+            return
+
+        for user_id_int, handle in users:
+            # Force the API call for everyone at midnight to ensure absolute accuracy
+            await self._update_user_streak(user_id_int, handle, force_api_call=True)
+            await asyncio.sleep(0.5) # Prevent rate-limiting from Codeforces API
+
+        self.logger.info("Daily streak & badge update completed successfully.")
+
+    @update_streaks_task.before_loop
+    async def before_update_streaks_task(self):
+        await self.bot.wait_until_ready()
+
+    async def _update_user_streak(self, user_id_int, handle, force_api_call=False):
         """Core logic to fetch submissions, check dates, update streaks, and award badges."""
+        self._ensure_tables()
         user_id_str = str(user_id_int)
         
         row = cf_common.user_db.conn.execute(
@@ -87,17 +91,20 @@ class Streaks(commands.Cog):
         current_streak = row[0] if row else 0
         max_streak = row[1] if row else 0
         last_ac_date = row[2] if row else None
+        
+        today_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d')
+        yesterday_str = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+
+        # EFFICIENCY FIX: If we aren't forcing an API call, and they already got an AC today, skip the API completely!
+        if not force_api_call and last_ac_date == today_str:
+            return current_streak, max_streak, True, []
 
         try:
             # Fetch recent submissions
             subs = await cf.user.status(handle=handle, count=50)
         except Exception as e:
             self.logger.warning(f"Failed to fetch CF status for {handle}: {e}")
-            return current_streak, max_streak, False
-
-        # Work in UTC since Codeforces API timestamps are global
-        today_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d')
-        yesterday_str = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+            return current_streak, max_streak, (last_ac_date == today_str), []
 
         ac_dates = set()
         for s in subs:
@@ -165,7 +172,6 @@ class Streaks(commands.Cog):
                 
                 # Track languages for Polyglot badge
                 if getattr(s, 'programmingLanguage', None):
-                    # Broaden language grouping to avoid C++14 vs C++17 counting as two
                     lang = s.programmingLanguage.lower()
                     if 'c++' in lang: ac_languages.add('c++')
                     elif 'python' in lang or 'pypy' in lang: ac_languages.add('python')
@@ -191,7 +197,6 @@ class Streaks(commands.Cog):
                 if 'Necromancer 🧟' not in existing_badges and s.problem.contestId:
                     try:
                         contest = cf_common.cache2.contest_cache.get_contest(s.problem.contestId)
-                        # 5 years ~= 157,680,000 seconds
                         if contest and s.creationTimeSeconds - contest.startTimeSeconds > 157680000:
                             new_badges.append('Necromancer 🧟')
                             existing_badges.add('Necromancer 🧟')
@@ -238,12 +243,10 @@ class Streaks(commands.Cog):
 
         # Badge: Powers of 2 Streak 🔥 (Based on max streak to make it permanent)
         if max_streak > 0:
-            # Calculate highest power of 2 using bit_length
             highest_pow2 = 1 << (max_streak.bit_length() - 1)
             streak_badge_name = f"Streak 🔥: {highest_pow2} Days"
             
             if streak_badge_name not in existing_badges:
-                # Remove any lower streak badges they might have unlocked previously
                 cf_common.user_db.conn.execute(
                     "DELETE FROM user_badges WHERE user_id = ? AND badge_name LIKE 'Streak 🔥: %'",
                     (user_id_str,)
@@ -270,6 +273,7 @@ class Streaks(commands.Cog):
         if not handle:
             return await ctx.send(f"{member.display_name} has not identified their Codeforces handle. Use `;handle set`.")
 
+        # Will only hit the Codeforces API if they haven't gotten an AC yet today!
         current_streak, max_streak, today_ac, new_badges = await self._update_user_streak(member.id, handle)
 
         embed = discord.Embed(
@@ -295,9 +299,22 @@ class Streaks(commands.Cog):
             badge_list = ", ".join(new_badges)
             await ctx.send(f"🎉 **Achievement Unlocked!** {member.mention} just earned: **{badge_list}**! Check `;badges`")
 
+    @streak.command(name='update', brief='Force update your streak from Codeforces')
+    async def streak_update(self, ctx):
+        """Forces a check against the Codeforces API to update your streak immediately."""
+        handle = cf_common.user_db.get_handle(ctx.author.id, ctx.guild.id)
+        if not handle:
+            return await ctx.send(f"{ctx.author.mention}, you have not identified your Codeforces handle.")
+        
+        await ctx.send("🔄 Fetching your latest submissions from Codeforces...")
+        # Force the API call so midday solvers can manually push their stats through
+        await self._update_user_streak(ctx.author.id, handle, force_api_call=True)
+        await self.streak(ctx, ctx.author)
+
     @streak.command(name='top', aliases=['leaderboard', 'lb'])
     async def streak_top(self, ctx):
         """Shows the server leaderboard for Daily AC Streaks."""
+        self._ensure_tables()
         rows = cf_common.user_db.conn.execute('''
             SELECT user_id, current_streak, max_streak
             FROM user_streak
@@ -329,14 +346,13 @@ class Streaks(commands.Cog):
     @commands.command(brief='View your earned CP badges')
     async def badges(self, ctx, member: discord.Member = None):
         """Displays the achievement badges you have earned by solving problems."""
+        self._ensure_tables()
         member = member or ctx.author
         handle = cf_common.user_db.get_handle(member.id, ctx.guild.id)
         if not handle:
             return await ctx.send(f"{member.display_name} has not identified their Codeforces handle.")
             
-        # Trigger an update to make sure we don't miss any recent unlocks
-        await self._update_user_streak(member.id, handle)
-        
+        # VERY EFFICIENT: Fetch directly from the database without invoking Codeforces API
         rows = cf_common.user_db.conn.execute(
             "SELECT badge_name, awarded_date FROM user_badges WHERE user_id = ?",
             (str(member.id),)
