@@ -236,6 +236,21 @@ class Streaks(commands.Cog):
             new_badges.append('Polyglot 🗣️')
             existing_badges.add('Polyglot 🗣️')
 
+        # Badge: Powers of 2 Streak 🔥 (Based on max streak to make it permanent)
+        if max_streak > 0:
+            # Calculate highest power of 2 using bit_length
+            highest_pow2 = 1 << (max_streak.bit_length() - 1)
+            streak_badge_name = f"Streak 🔥: {highest_pow2} Days"
+            
+            if streak_badge_name not in existing_badges:
+                # Remove any lower streak badges they might have unlocked previously
+                cf_common.user_db.conn.execute(
+                    "DELETE FROM user_badges WHERE user_id = ? AND badge_name LIKE 'Streak 🔥: %'",
+                    (user_id_str,)
+                )
+                new_badges.append(streak_badge_name)
+                existing_badges.add(streak_badge_name)
+
         # Save any newly awarded badges
         award_date = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d')
         for badge in new_badges:
@@ -247,27 +262,6 @@ class Streaks(commands.Cog):
         cf_common.user_db.conn.commit()
         return current_streak, max_streak, today_ac, new_badges
 
-    async def _assign_streak_roles(self, member, streak):
-        """Automatically assigns reward roles based on streak thresholds."""
-        guild = member.guild
-        role_map = {
-            7: "7-Day Streak",     
-            30: "30-Day Streak",
-            100: "100-Day Streak"
-        }
-        
-        highest_role = None
-        for threshold, role_name in sorted(role_map.items(), reverse=True):
-            if streak >= threshold:
-                highest_role = discord.utils.get(guild.roles, name=role_name)
-                break
-
-        if highest_role and highest_role not in member.roles:
-            try:
-                await member.add_roles(highest_role)
-            except discord.Forbidden:
-                pass 
-
     @commands.group(brief='Daily AC Streak commands', invoke_without_command=True)
     async def streak(self, ctx, member: discord.Member = None):
         """Shows your current consecutive days of solving Codeforces problems."""
@@ -277,7 +271,6 @@ class Streaks(commands.Cog):
             return await ctx.send(f"{member.display_name} has not identified their Codeforces handle. Use `;handle set`.")
 
         current_streak, max_streak, today_ac, new_badges = await self._update_user_streak(member.id, handle)
-        await self._assign_streak_roles(member, current_streak)
 
         embed = discord.Embed(
             title=f"🔥 Streak for {handle} 🔥",
@@ -358,5 +351,6 @@ class Streaks(commands.Cog):
                 
         await ctx.send(embed=embed)
 
+# TLE runs on Discord.py 2.x, so we use the async setup hook
 async def setup(bot):
     await bot.add_cog(Streaks(bot))
