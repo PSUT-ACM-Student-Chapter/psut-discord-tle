@@ -9,6 +9,19 @@ from discord.ext import commands, tasks
 from tle.util import codeforces_api as cf
 from tle.util import codeforces_common as cf_common
 
+BADGE_DESCRIPTIONS = {
+    'Night Owl 🦇': 'Submitted an Accepted solution between 2 AM and 5 AM UTC.',
+    'Speed Demon ⚡': 'Solved problem A in under 5 minutes during a contest.',
+    'Necromancer 🧟': 'Solved a problem published over 5 years ago.',
+    'Sniper 🎯': 'Achieved 5 Accepted submissions in a row with no Wrong Answers.',
+    'Early Bird 🌅': 'Submitted an Accepted solution between 5 AM and 8 AM UTC.',
+    'Persistent 😤': 'Got an Accepted solution after 5+ failures on the same problem.',
+    'Math Whiz 🧮': 'Solved a problem with the "math" tag.',
+    'Graph Master 🕸️': 'Solved a problem with the "graphs" or "trees" tag.',
+    'Prime 🔢': 'Got an Accepted solution on a prime numbered submission ID.',
+    'Polyglot 🗣️': 'Got Accepted solutions in 3 or more different programming languages recently.'
+}
+
 def is_prime(n):
     """Efficient prime checker for Codeforces submission IDs."""
     if n <= 1:
@@ -68,9 +81,8 @@ class Streaks(commands.Cog):
             return
 
         for user_id_int, handle in users:
-            # Force the API call for everyone at midnight to ensure absolute accuracy
             await self._update_user_streak(user_id_int, handle, force_api_call=True)
-            await asyncio.sleep(0.5) # Prevent rate-limiting from Codeforces API
+            await asyncio.sleep(0.5) 
 
         self.logger.info("Daily streak & badge update completed successfully.")
 
@@ -79,7 +91,7 @@ class Streaks(commands.Cog):
         await self.bot.wait_until_ready()
 
     async def _update_user_streak(self, user_id_int, handle, force_api_call=False):
-        """Core logic to fetch submissions, check dates, update streaks, and award badges."""
+        """Calculates streak by counting backwards through unique AC dates."""
         self._ensure_tables()
         user_id_str = str(user_id_int)
         
@@ -88,52 +100,58 @@ class Streaks(commands.Cog):
             (user_id_str,)
         ).fetchone()
 
-        current_streak = row[0] if row else 0
-        max_streak = row[1] if row else 0
-        last_ac_date = row[2] if row else None
+        db_current_streak = row[0] if row else 0
+        db_max_streak = row[1] if row else 0
+        db_last_ac_date = row[2] if row else None
         
-        today_str = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d')
-        yesterday_str = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+        now = datetime.datetime.now(datetime.timezone.utc)
+        today_date = now.date()
+        yesterday_date = today_date - datetime.timedelta(days=1)
+        today_str = today_date.strftime('%Y-%m-%d')
 
-        # EFFICIENCY FIX: If we aren't forcing an API call, and they already got an AC today, skip the API completely!
-        if not force_api_call and last_ac_date == today_str:
-            return current_streak, max_streak, True, []
+        # Cache optimization
+        if not force_api_call and db_last_ac_date == today_str:
+            return db_current_streak, db_max_streak, True, []
 
         try:
-            # Fetch recent submissions
-            subs = await cf.user.status(handle=handle, count=50)
+            # We fetch more submissions (up to 1000) to accurately reconstruct long streaks
+            subs = await cf.user.status(handle=handle, count=1000)
         except Exception as e:
             self.logger.warning(f"Failed to fetch CF status for {handle}: {e}")
-            return current_streak, max_streak, (last_ac_date == today_str), []
+            return db_current_streak, db_max_streak, (db_last_ac_date == today_str), []
 
-        ac_dates = set()
+        # Map unique AC dates
+        ac_dates_set = set()
         for s in subs:
             if s.verdict == 'OK':
-                date_str = datetime.datetime.fromtimestamp(s.creationTimeSeconds, datetime.timezone.utc).strftime('%Y-%m-%d')
-                ac_dates.add(date_str)
+                dt = datetime.datetime.fromtimestamp(s.creationTimeSeconds, datetime.timezone.utc).date()
+                ac_dates_set.add(dt)
 
-        today_ac = today_str in ac_dates
-        yesterday_ac = yesterday_str in ac_dates
+        # 1. CALCULATE CURRENT STREAK BY COUNTING BACKWARDS
+        calc_streak = 0
+        check_date = today_date
+        
+        # If no AC today, check if the streak was alive yesterday
+        if today_date not in ac_dates_set:
+            if yesterday_date in ac_dates_set:
+                check_date = yesterday_date
+            else:
+                calc_streak = 0 # Streak is dead
+                check_date = None
 
-        # ==========================================
-        # 1. STREAK STATE MACHINE
-        # ==========================================
-        if today_ac:
-            if last_ac_date == yesterday_str:
-                current_streak += 1
-                last_ac_date = today_str
-            elif last_ac_date != today_str:
-                current_streak = 1
-                last_ac_date = today_str
-            max_streak = max(max_streak, current_streak)
-        elif yesterday_ac:
-            if last_ac_date != yesterday_str and last_ac_date != today_str:
-                current_streak = 1 if current_streak == 0 else current_streak + 1
-                last_ac_date = yesterday_str
-                max_streak = max(max_streak, current_streak)
-        else:
-            if last_ac_date != today_str and last_ac_date != yesterday_str:
-                current_streak = 0
+        if check_date:
+            while check_date in ac_dates_set:
+                calc_streak += 1
+                check_date -= datetime.timedelta(days=1)
+
+        # Update last_ac_date based on found ACs
+        new_last_ac_date = db_last_ac_date
+        if today_date in ac_dates_set:
+            new_last_ac_date = today_str
+        elif yesterday_date in ac_dates_set and (db_last_ac_date != today_str):
+            new_last_ac_date = yesterday_date.strftime('%Y-%m-%d')
+
+        new_max_streak = max(db_max_streak, calc_streak)
 
         cf_common.user_db.conn.execute('''
             INSERT INTO user_streak (user_id, current_streak, max_streak, last_ac_date)
@@ -142,11 +160,9 @@ class Streaks(commands.Cog):
             current_streak=excluded.current_streak,
             max_streak=excluded.max_streak,
             last_ac_date=excluded.last_ac_date
-        ''', (user_id_str, current_streak, max_streak, last_ac_date))
+        ''', (user_id_str, calc_streak, new_max_streak, new_last_ac_date))
         
-        # ==========================================
-        # 2. ACHIEVEMENT BADGES LOGIC
-        # ==========================================
+        # 2. BADGE LOGIC (Iterate submissions chronologically)
         existing_badges = {
             r[0] for r in cf_common.user_db.conn.execute(
                 "SELECT badge_name FROM user_badges WHERE user_id = ?", (user_id_str,)
@@ -154,116 +170,73 @@ class Streaks(commands.Cog):
         }
         new_badges = []
         
-        # Process chronologically for sequential badges like "Sniper"
         subs_chronological = sorted(subs, key=lambda x: x.creationTimeSeconds)
         consecutive_acs = 0
         problem_fails = {}
         ac_languages = set()
         
         for s in subs_chronological:
-            if s.verdict == 'TESTING': 
-                continue
-                
+            if s.verdict == 'TESTING': continue
             problem_id = f"{s.problem.contestId}{s.problem.index}"
-                
             if s.verdict == 'OK':
                 consecutive_acs += 1
                 dt = datetime.datetime.fromtimestamp(s.creationTimeSeconds, datetime.timezone.utc)
                 
-                # Track languages for Polyglot badge
+                # Language tracking
                 if getattr(s, 'programmingLanguage', None):
                     lang = s.programmingLanguage.lower()
                     if 'c++' in lang: ac_languages.add('c++')
                     elif 'python' in lang or 'pypy' in lang: ac_languages.add('python')
                     elif 'java' in lang and 'javascript' not in lang: ac_languages.add('java')
-                    elif 'rust' in lang: ac_languages.add('rust')
-                    elif 'c#' in lang: ac_languages.add('c#')
                     else: ac_languages.add(lang)
                 
-                # Badge: Night Owl 🦇 (AC between 2 AM and 5 AM UTC)
+                # Time-based & complexity badges
                 if 'Night Owl 🦇' not in existing_badges and 2 <= dt.hour < 5:
                     new_badges.append('Night Owl 🦇')
                     existing_badges.add('Night Owl 🦇')
-                
-                # Badge: Speed Demon ⚡ (Solve 'A' problem in <= 5 mins during contest)
-                if 'Speed Demon ⚡' not in existing_badges:
-                    is_contestant = s.author.participantType == 'CONTESTANT'
-                    relative_time = getattr(s, 'relativeTimeSeconds', 9999) # fallback if missing
-                    if is_contestant and relative_time <= 300 and s.problem.index.startswith('A'):
-                        new_badges.append('Speed Demon ⚡')
-                        existing_badges.add('Speed Demon ⚡')
-                        
-                # Badge: Necromancer 🧟 (Solve a problem published > 5 years ago)
-                if 'Necromancer 🧟' not in existing_badges and s.problem.contestId:
-                    try:
-                        contest = cf_common.cache2.contest_cache.get_contest(s.problem.contestId)
-                        if contest and s.creationTimeSeconds - contest.startTimeSeconds > 157680000:
-                            new_badges.append('Necromancer 🧟')
-                            existing_badges.add('Necromancer 🧟')
-                    except Exception:
-                        pass # Ignore if contest is not found in TLE cache
-                
-                # Badge: Sniper 🎯 (5 ACs in a row with 0 WAs)
-                if 'Sniper 🎯' not in existing_badges and consecutive_acs >= 5:
-                    new_badges.append('Sniper 🎯')
-                    existing_badges.add('Sniper 🎯')
-                    
-                # Badge: Early Bird 🌅 (AC between 5 AM and 8 AM UTC)
                 if 'Early Bird 🌅' not in existing_badges and 5 <= dt.hour < 8:
                     new_badges.append('Early Bird 🌅')
                     existing_badges.add('Early Bird 🌅')
-                    
-                # Badge: Persistent 😤 (AC after 5+ failures on the same problem)
+                if 'Speed Demon ⚡' not in existing_badges and s.author.participantType == 'CONTESTANT':
+                    if getattr(s, 'relativeTimeSeconds', 9999) <= 300 and s.problem.index.startswith('A'):
+                        new_badges.append('Speed Demon ⚡')
+                        existing_badges.add('Speed Demon ⚡')
+                if 'Sniper 🎯' not in existing_badges and consecutive_acs >= 5:
+                    new_badges.append('Sniper 🎯')
+                    existing_badges.add('Sniper 🎯')
                 if 'Persistent 😤' not in existing_badges and problem_fails.get(problem_id, 0) >= 5:
                     new_badges.append('Persistent 😤')
                     existing_badges.add('Persistent 😤')
-                    
-                # Badge: Math Whiz 🧮 (Solve a math tagged problem)
                 if 'Math Whiz 🧮' not in existing_badges and s.problem.tags and 'math' in s.problem.tags:
                     new_badges.append('Math Whiz 🧮')
                     existing_badges.add('Math Whiz 🧮')
-                    
-                # Badge: Graph Master 🕸️ (Solve a graph/tree tagged problem)
-                if 'Graph Master 🕸️' not in existing_badges and s.problem.tags and ('graphs' in s.problem.tags or 'trees' in s.problem.tags):
-                    new_badges.append('Graph Master 🕸️')
-                    existing_badges.add('Graph Master 🕸️')
-                    
-                # Badge: Prime 🔢 (Submission ID is a prime number)
                 if 'Prime 🔢' not in existing_badges and getattr(s, 'id', None) and is_prime(s.id):
                     new_badges.append('Prime 🔢')
                     existing_badges.add('Prime 🔢')
             else:
-                consecutive_acs = 0 # Broke the AC streak
+                consecutive_acs = 0
                 problem_fails[problem_id] = problem_fails.get(problem_id, 0) + 1
 
-        # Badge: Polyglot 🗣️ (ACs in 3+ distinct languages in the recent window)
         if 'Polyglot 🗣️' not in existing_badges and len(ac_languages) >= 3:
             new_badges.append('Polyglot 🗣️')
             existing_badges.add('Polyglot 🗣️')
 
-        # Badge: Powers of 2 Streak 🔥 (Based on max streak to make it permanent)
-        if max_streak > 0:
-            highest_pow2 = 1 << (max_streak.bit_length() - 1)
+        # Powers of 2 Streak Badge
+        if new_max_streak > 0:
+            highest_pow2 = 1 << (new_max_streak.bit_length() - 1)
             streak_badge_name = f"Streak 🔥: {highest_pow2} Days"
-            
             if streak_badge_name not in existing_badges:
-                cf_common.user_db.conn.execute(
-                    "DELETE FROM user_badges WHERE user_id = ? AND badge_name LIKE 'Streak 🔥: %'",
-                    (user_id_str,)
-                )
+                cf_common.user_db.conn.execute("DELETE FROM user_badges WHERE user_id = ? AND badge_name LIKE 'Streak 🔥: %'", (user_id_str,))
                 new_badges.append(streak_badge_name)
                 existing_badges.add(streak_badge_name)
 
-        # Save any newly awarded badges
+        # Save new badges
         award_date = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d')
         for badge in new_badges:
-            cf_common.user_db.conn.execute(
-                "INSERT OR IGNORE INTO user_badges (user_id, badge_name, awarded_date) VALUES (?, ?, ?)",
-                (user_id_str, badge, award_date)
-            )
-            
+            cf_common.user_db.conn.execute("INSERT OR IGNORE INTO user_badges (user_id, badge_name, awarded_date) VALUES (?, ?, ?)", (user_id_str, badge, award_date))
         cf_common.user_db.conn.commit()
-        return current_streak, max_streak, today_ac, new_badges
+
+        return calc_streak, new_max_streak, (today_date in ac_dates_set), new_badges
 
     @commands.group(brief='Daily AC Streak commands', invoke_without_command=True)
     async def streak(self, ctx, member: discord.Member = None):
@@ -273,97 +246,74 @@ class Streaks(commands.Cog):
         if not handle:
             return await ctx.send(f"{member.display_name} has not identified their Codeforces handle. Use `;handle set`.")
 
-        # Will only hit the Codeforces API if they haven't gotten an AC yet today!
-        current_streak, max_streak, today_ac, new_badges = await self._update_user_streak(member.id, handle)
+        async with ctx.typing():
+            current_streak, max_streak, today_ac, new_badges = await self._update_user_streak(member.id, handle)
 
         embed = discord.Embed(
             title=f"🔥 Streak for {handle} 🔥",
-            color=discord.Color.orange() if current_streak > 0 else discord.Color.default()
+            color=discord.Color.orange() if current_streak > 0 else discord.Color.light_grey()
         )
         
-        streak_text = f"**{current_streak}** days" if current_streak > 0 else "0 days 😢"
-        embed.add_field(name="Current Streak", value=streak_text, inline=True)
+        embed.add_field(name="Current Streak", value=f"**{current_streak}** days", inline=True)
         embed.add_field(name="Max Streak", value=f"**{max_streak}** days", inline=True)
 
         if today_ac:
-            embed.set_footer(text="✅ You have already submitted an AC today! Keep it up!")
+            embed.set_footer(text="✅ AC submitted today! Keep it up!")
         elif current_streak > 0:
-            embed.set_footer(text="⚠️ You haven't got an AC today! Go solve a problem to keep the streak alive!")
+            embed.set_footer(text="⚠️ Solve a problem today to keep the streak alive!")
         else:
             embed.set_footer(text="Get an AC today to start your streak!")
 
         await ctx.send(embed=embed)
-        
-        # If they just unlocked a badge, let them know!
         if new_badges:
-            badge_list = ", ".join(new_badges)
-            await ctx.send(f"🎉 **Achievement Unlocked!** {member.mention} just earned: **{badge_list}**! Check `;badges`")
+            await ctx.send(f"🎉 **Achievement Unlocked!** {member.mention} earned: **{', '.join(new_badges)}**!")
 
-    @streak.command(name='update', brief='Force update your streak from Codeforces')
+    @streak.command(name='update')
     async def streak_update(self, ctx):
-        """Forces a check against the Codeforces API to update your streak immediately."""
+        """Forces a full refresh from Codeforces."""
         handle = cf_common.user_db.get_handle(ctx.author.id, ctx.guild.id)
-        if not handle:
-            return await ctx.send(f"{ctx.author.mention}, you have not identified your Codeforces handle.")
-        
-        await ctx.send("🔄 Fetching your latest submissions from Codeforces...")
-        # Force the API call so midday solvers can manually push their stats through
+        if not handle: return await ctx.send("Handle not set.")
+        await ctx.send("🔄 Re-calculating full history...")
         await self._update_user_streak(ctx.author.id, handle, force_api_call=True)
         await self.streak(ctx, ctx.author)
 
-    @streak.command(name='top', aliases=['leaderboard', 'lb'])
+    @streak.command(name='top', aliases=['lb'])
     async def streak_top(self, ctx):
-        """Shows the server leaderboard for Daily AC Streaks."""
+        """Leaderboard for current active streaks."""
         self._ensure_tables()
-        rows = cf_common.user_db.conn.execute('''
-            SELECT user_id, current_streak, max_streak
-            FROM user_streak
-            WHERE current_streak > 0
-            ORDER BY current_streak DESC
-        ''').fetchall()
-
+        rows = cf_common.user_db.conn.execute('SELECT user_id, current_streak, max_streak FROM user_streak WHERE current_streak > 0 ORDER BY current_streak DESC').fetchall()
         guild_member_ids = {str(m.id): m for m in ctx.guild.members}
-        
         board = []
-        for user_id_str, cur, mx in rows:
-            if user_id_str in guild_member_ids:
-                board.append((guild_member_ids[user_id_str].display_name, cur, mx))
+        for uid, cur, mx in rows:
+            if uid in guild_member_ids:
+                board.append((guild_member_ids[uid].display_name, cur, mx))
 
-        if not board:
-            return await ctx.send("No active streaks found for members of this server! 😢")
-
-        board = board[:10] 
-
+        if not board: return await ctx.send("No active streaks found.")
         embed = discord.Embed(title="🔥 Server Streak Leaderboard 🔥", color=discord.Color.red())
-        desc = ""
-        for i, (name, cur, mx) in enumerate(board, 1):
-            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "🏅"
-            desc += f"{medal} **{name}** - {cur} days (Max: {mx})\n"
-            
-        embed.description = desc
+        embed.description = "\n".join([f"{'🥇' if i==0 else '🥈' if i==1 else '🥉' if i==2 else '🏅'} **{n}** - {c} days (Max: {m})" for i, (n, c, m) in enumerate(board[:10])])
         await ctx.send(embed=embed)
 
     @commands.command(brief='View your earned CP badges')
     async def badges(self, ctx, member: discord.Member = None):
-        """Displays the achievement badges you have earned by solving problems."""
+        """Displays achievement badges with descriptions."""
         self._ensure_tables()
         member = member or ctx.author
         handle = cf_common.user_db.get_handle(member.id, ctx.guild.id)
-        if not handle:
-            return await ctx.send(f"{member.display_name} has not identified their Codeforces handle.")
+        if not handle: return await ctx.send(f"{member.display_name} has no handle set.")
             
-        # VERY EFFICIENT: Fetch directly from the database without invoking Codeforces API
-        rows = cf_common.user_db.conn.execute(
-            "SELECT badge_name, awarded_date FROM user_badges WHERE user_id = ?",
-            (str(member.id),)
-        ).fetchall()
-        
+        async with ctx.typing():
+            _, _, _, new_badges = await self._update_user_streak(member.id, handle, force_api_call=True)
+            if new_badges: await ctx.send(f"🎉 **Achievement Unlocked!** {member.mention} earned: **{', '.join(new_badges)}**!")
+
+            rows = cf_common.user_db.conn.execute("SELECT badge_name, awarded_date FROM user_badges WHERE user_id = ? ORDER BY awarded_date DESC", (str(member.id),)).fetchall()
+            
         embed = discord.Embed(title=f"🏅 Achievements for {handle}", color=discord.Color.gold())
         if not rows:
-            embed.description = "No badges earned yet. Keep practicing to unlock them!"
+            embed.description = "No badges earned yet."
         else:
             for badge, date in rows:
-                embed.add_field(name=badge, value=f"Earned: *{date}*", inline=False)
+                desc = "Maintained a consistent daily AC streak." if badge.startswith("Streak") else BADGE_DESCRIPTIONS.get(badge, "Special achievement.")
+                embed.add_field(name=badge, value=f"{desc}\n*Earned: {date}*", inline=False)
                 
         await ctx.send(embed=embed)
 
