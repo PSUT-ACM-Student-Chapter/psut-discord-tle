@@ -133,7 +133,7 @@ class Streaks(commands.Cog):
                 subs = await cf.user.status(handle=handle)
             else:
                 # Incremental Update: Fetch a recent slice
-                subs = await cf.user.status(handle=handle, count=100)
+                subs = await cf.user.status(handle=handle, count=10000)
         except Exception as e:
             self.logger.warning(f"Failed to fetch CF status for {handle}: {e}")
             return curr_streak, max_streak, (last_ac_date_str == today.strftime('%Y-%m-%d')), []
