@@ -56,7 +56,7 @@ class Decision(commands.Cog):
             color = discord.Color.gold()
             
         embed = discord.Embed(
-            title="✨ The Filter Has Spoken ✨",
+            title="✨ Pxl has Spoken ✨",
             description=f"# {final_choice}",
             color=color
         )
