@@ -10,7 +10,7 @@ class Startup(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         # Fetch the comma-separated list of channel IDs
-        channel_ids_str = os.environ.get("CHANNEL_IDS", os.environ.get("CHANNEL_ID"))
+        channel_ids_str = os.environ.get("ANNOUNCMENT")
         
         if channel_ids_str:
             # Split by comma, strip spaces, and ensure they are digits

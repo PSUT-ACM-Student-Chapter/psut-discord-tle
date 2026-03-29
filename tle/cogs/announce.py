@@ -35,7 +35,7 @@ class Announcer(commands.Cog):
     async def announce_winners(self, start_time, end_time, month_name):
         """Calculates the scores for the given timeframe and posts the Top 3."""
         # Use the "announcement" environment variable for channel IDs
-        channel_ids_str = os.environ.get("announcement")
+        channel_ids_str = os.environ.get("ANNOUNCMENT")
         if not channel_ids_str:
             return
             
