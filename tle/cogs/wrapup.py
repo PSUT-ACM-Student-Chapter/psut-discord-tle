@@ -11,12 +11,19 @@ from tle.util import codeforces_api as cf
 from tle.util import codeforces_common as cf_common
 
 class WeeklyWrapUp(commands.Cog):
+
     def __init__(self, bot):
         self.bot = bot
         self.logger = logging.getLogger(self.__class__.__name__)
-        
+
+        # Runs every day at 23:00 UTC (We will filter for Sunday inside the loop)
+        self.weekly_report_task.start()
+
+    @commands.Cog.listener()
+    async def on_ready(self):
         # Ensure the wrapup_channels table exists immediately on bot startup.
         # This prevents "no such table" errors if setchannel is run early.
+        # Moved to on_ready to ensure cf_common.user_db is initialized.
         cf_common.user_db.conn.execute('''
             CREATE TABLE IF NOT EXISTS wrapup_channels (
                 guild_id TEXT PRIMARY KEY,
@@ -24,9 +31,6 @@ class WeeklyWrapUp(commands.Cog):
             )
         ''')
         cf_common.user_db.conn.commit()
-
-        # Runs every day at 23:00 UTC (We will filter for Sunday inside the loop)
-        self.weekly_report_task.start()
 
     def cog_unload(self):
         self.weekly_report_task.cancel()
