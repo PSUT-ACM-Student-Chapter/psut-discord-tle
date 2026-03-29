@@ -18,8 +18,52 @@ from tle.util import codeforces_common as cf_common
 from tle.util import discord_common, font_downloader
 import tle.pxl_alias  # Injects Pxl role as Admin
 
+# --- DISABLE SLASH COMMANDS (USE PREFIX ONLY) ---
+# The bot is configured to only use prefix commands (like ;cf profile).
+# This overrides any hybrid commands in the cogs to act as standard text commands,
+# preventing errors with *args and keeping the classic TLE experience.
 commands.hybrid_command = commands.command
 commands.hybrid_group = commands.group
+# ----------------------------------------
+
+# ---------------------------------------------------------
+# 1. CUSTOM BOT CLASS FOR SHUTDOWN MESSAGE
+# ---------------------------------------------------------
+class TLEBot(commands.Bot):
+    async def close(self):
+        # Fetch the channel ID from the environment variable
+        channel_id_str = os.environ.get('announcement')
+        
+        if channel_id_str and channel_id_str.isdigit():
+            channel_id = int(channel_id_str)
+            channel = self.get_channel(channel_id)
+            
+            if channel:
+                # The array of funny restart statements
+                restart_messages = [
+                    "Time for my mandatory 'turning-it-off-and-on-again' therapy session. BRB! 🔧",
+                    "I feel a sudden urge to reboot... Tell my variables I love them! 🥺",
+                    "Lag! I'm lagging! Restarting to download more RAM... 💾",
+                    "Oh, great. The humans are making me restart again. Be back in a sec... 🙄",
+                    "I sense a disturbance in the source code... BRB! 🌌",
+                    "Hold my RAM, I'm taking a quick nap! 💤 (Restarting...)"
+                ]
+                
+                # Randomly choose one message from the array
+                chosen_message = random.choice(restart_messages)
+                
+                try:
+                    await channel.send(chosen_message)
+                    # Give the bot 1 second to actually push the message through the network
+                    await asyncio.sleep(1) 
+                except Exception as e:
+                    logging.error(f"Failed to send restart message: {e}")
+        else:
+            logging.warning("announcement is not set or invalid. Skipping restart message.")
+        
+        # Proceed with the actual shutdown process
+        await super().close()
+# ---------------------------------------------------------
 
 def setup():
     # Make required directories.
