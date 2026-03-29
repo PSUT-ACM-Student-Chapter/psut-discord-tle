@@ -333,7 +333,6 @@ class Streaks(commands.Cog):
             await ctx.send(f"🎉 **Achievement Unlocked!** {member.mention} earned: **{', '.join(new_badges)}**!")
 
     @streak.command(name='update')
-    @commands.has_role(constants.TLE_ADMIN)
     async def streak_update(self, ctx):
         """Forces a hard reset and recalculates your streak from your complete history."""
         handle = cf_common.user_db.get_handle(ctx.author.id, ctx.guild.id)
@@ -347,6 +346,43 @@ class Streaks(commands.Cog):
         
         await self._update_user_streak(ctx.author.id, handle, force_refresh=True)
         await self.streak(ctx, ctx.author)
+
+    @streak.command(name='updateall')
+    @commands.has_role(constants.TLE_ADMIN)
+    async def streak_update_all(self, ctx, force: bool = False):
+        """Manually triggers a streak update for all registered users."""
+        await ctx.send(f"🔄 Starting streak update for all registered users... (Force reset: {force})\nThis will take a moment to respect API rate limits.")
+        
+        self._ensure_tables()
+        try:
+            # Fetches all users from the DB
+            users = cf_common.user_db.conn.execute(
+                "SELECT DISTINCT user_id, handle FROM user_handle"
+            ).fetchall()
+        except Exception as e:
+            self.logger.error(f"Failed to fetch users from DB: {e}")
+            return await ctx.send("❌ Failed to fetch users from the database.")
+
+        updated_count = 0
+        for user_id_int, handle in users:
+            try:
+                if force:
+                    # If forced, reset last_id to 0 to trigger a full recalculation
+                    cf_common.user_db.conn.execute(
+                        "UPDATE user_streak SET last_id = 0 WHERE user_id = ?", 
+                        (str(user_id_int),)
+                    )
+                    cf_common.user_db.conn.commit()
+
+                await self._update_user_streak(user_id_int, handle, force_refresh=force)
+                updated_count += 1
+            except Exception as e:
+                self.logger.warning(f"Failed to update streak for {handle}: {e}")
+            
+            # 0.5s pause to prevent getting banned from the Codeforces API!
+            await asyncio.sleep(0.5) 
+            
+        await ctx.send(f"✅ Streak update completed successfully for {updated_count} users!")
 
     @streak.command(name='top', aliases=['lb'])
     async def streak_top(self, ctx):
