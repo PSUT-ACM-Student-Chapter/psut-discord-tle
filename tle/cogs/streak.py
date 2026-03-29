@@ -27,26 +27,6 @@ class Streaks(commands.Cog):
         self.bot = bot
         self.logger = logging.getLogger(self.__class__.__name__)
         
-        # Safely initialize the new tables inside the existing SQLite DB
-        cf_common.user_db.conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_streak (
-                user_id TEXT PRIMARY KEY,
-                current_streak INTEGER DEFAULT 0,
-                max_streak INTEGER DEFAULT 0,
-                last_ac_date TEXT
-            )
-        ''')
-        
-        cf_common.user_db.conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_badges (
-                user_id TEXT,
-                badge_name TEXT,
-                awarded_date TEXT,
-                PRIMARY KEY (user_id, badge_name)
-            )
-        ''')
-        cf_common.user_db.conn.commit()
-
         # Start the background checker
         self.update_streaks_task.start()
 
@@ -74,6 +54,26 @@ class Streaks(commands.Cog):
     @update_streaks_task.before_loop
     async def before_update_streaks_task(self):
         await self.bot.wait_until_ready()
+        
+        # Safely initialize the new tables here once the bot (and DB) is fully ready!
+        cf_common.user_db.conn.execute('''
+            CREATE TABLE IF NOT EXISTS user_streak (
+                user_id TEXT PRIMARY KEY,
+                current_streak INTEGER DEFAULT 0,
+                max_streak INTEGER DEFAULT 0,
+                last_ac_date TEXT
+            )
+        ''')
+        
+        cf_common.user_db.conn.execute('''
+            CREATE TABLE IF NOT EXISTS user_badges (
+                user_id TEXT,
+                badge_name TEXT,
+                awarded_date TEXT,
+                PRIMARY KEY (user_id, badge_name)
+            )
+        ''')
+        cf_common.user_db.conn.commit()
 
     async def _update_user_streak(self, user_id_int, handle):
         """Core logic to fetch submissions, check dates, update streaks, and award badges."""
@@ -351,6 +351,5 @@ class Streaks(commands.Cog):
                 
         await ctx.send(embed=embed)
 
-# TLE runs on Discord.py 2.x, so we use the async setup hook
 async def setup(bot):
     await bot.add_cog(Streaks(bot))
