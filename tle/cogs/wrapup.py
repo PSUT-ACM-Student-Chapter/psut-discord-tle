@@ -6,6 +6,7 @@ import time
 import discord
 from discord.ext import commands, tasks
 
+from tle import constants
 from tle.util import codeforces_api as cf
 from tle.util import codeforces_common as cf_common
 
@@ -26,7 +27,7 @@ class WeeklyWrapUp(commands.Cog):
         await ctx.send_help(ctx.command)
 
     @wrapup.command(name='setchannel', brief='Set the channel for weekly reports')
-    @commands.has_permissions(administrator=True)
+    @commands.has_role(constants.TLE_ADMIN)
     async def wrapup_setchannel(self, ctx):
         """Sets the current channel as the destination for Sunday Weekly Wrap-Ups."""
         guild_id_str = str(ctx.guild.id)
@@ -41,7 +42,7 @@ class WeeklyWrapUp(commands.Cog):
         await ctx.send(f"✅ The Weekly Chapter Wrap-Up will now be posted in {ctx.channel.mention} every Sunday night!")
 
     @wrapup.command(name='trigger', brief='Manually trigger the report (Admin only)')
-    @commands.has_permissions(administrator=True)
+    @commands.has_role(constants.TLE_ADMIN)
     async def wrapup_trigger(self, ctx):
         """Manually generates and posts the weekly wrap-up immediately."""
         await ctx.send("⏳ Generating the Weekly Wrap-Up... this might take a minute depending on the number of members.")
