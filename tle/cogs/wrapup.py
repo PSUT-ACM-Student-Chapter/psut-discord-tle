@@ -15,6 +15,16 @@ class WeeklyWrapUp(commands.Cog):
         self.bot = bot
         self.logger = logging.getLogger(self.__class__.__name__)
         
+        # Ensure the wrapup_channels table exists immediately on bot startup.
+        # This prevents "no such table" errors if setchannel is run early.
+        cf_common.user_db.conn.execute('''
+            CREATE TABLE IF NOT EXISTS wrapup_channels (
+                guild_id TEXT PRIMARY KEY,
+                channel_id TEXT
+            )
+        ''')
+        cf_common.user_db.conn.commit()
+
         # Runs every day at 23:00 UTC (We will filter for Sunday inside the loop)
         self.weekly_report_task.start()
 
@@ -61,19 +71,6 @@ class WeeklyWrapUp(commands.Cog):
         for guild_id_str, channel_id_str in configs:
             await self._generate_and_post_report(int(guild_id_str), int(channel_id_str))
 
-    @weekly_report_task.before_loop
-    async def before_weekly_report_task(self):
-        await self.bot.wait_until_ready()
-        
-        # Table to store which channel the wrap-up should be posted in for each guild
-        cf_common.user_db.conn.execute('''
-            CREATE TABLE IF NOT EXISTS wrapup_channels (
-                guild_id TEXT PRIMARY KEY,
-                channel_id TEXT
-            )
-        ''')
-        cf_common.user_db.conn.commit()
-
     async def _generate_and_post_report(self, guild_id, channel_id):
         guild = self.bot.get_guild(guild_id)
         channel = self.bot.get_channel(channel_id)
@@ -82,8 +79,22 @@ class WeeklyWrapUp(commands.Cog):
 
         one_week_ago = time.time() - (7 * 24 * 3600)
         
-        # Get all registered users in this guild
-        users = cf_common.user_db.get_users_for_guild(guild.id)
+        # Bypass missing get_users_for_guild because of the "Global" server ID merge.
+        # We fetch all handles and let Discord's guild.get_member() naturally filter out 
+        # users who aren't actually in this specific server.
+        try:
+            users_data = cf_common.user_db.conn.execute("SELECT user_id, handle FROM user_handle").fetchall()
+        except Exception as e:
+            self.logger.error(f"Failed to fetch users from DB: {e}")
+            return
+
+        # Simple container class to mimic the object structure the rest of the code expects
+        class _User:
+            def __init__(self, uid, hndl):
+                self.user_id = int(uid)
+                self.handle = hndl
+                
+        users = [_User(row[0], row[1]) for row in users_data]
         if not users:
             return
             
