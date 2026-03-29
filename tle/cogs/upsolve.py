@@ -13,23 +13,6 @@ class UpsolveNudges(commands.Cog):
         self.bot = bot
         self.logger = logging.getLogger(self.__class__.__name__)
         
-        # Safely initialize the tracking tables in the SQLite DB
-        # upsolve_problem_nudges prevents us from spamming the user multiple times for the same problem
-        cf_common.user_db.conn.execute('''
-            CREATE TABLE IF NOT EXISTS upsolve_problem_nudges (
-                user_id TEXT,
-                problem_id TEXT,
-                PRIMARY KEY (user_id, problem_id)
-            )
-        ''')
-        # upsolve_optout allows users to disable the feature for themselves
-        cf_common.user_db.conn.execute('''
-            CREATE TABLE IF NOT EXISTS upsolve_optout (
-                user_id TEXT PRIMARY KEY
-            )
-        ''')
-        cf_common.user_db.conn.commit()
-
         # Start the background checker
         self.nudge_task.start()
 
@@ -150,6 +133,23 @@ class UpsolveNudges(commands.Cog):
     @nudge_task.before_loop
     async def before_nudge_task(self):
         await self.bot.wait_until_ready()
+        
+        # Safely initialize the tracking tables in the SQLite DB
+        # upsolve_problem_nudges prevents us from spamming the user multiple times for the same problem
+        cf_common.user_db.conn.execute('''
+            CREATE TABLE IF NOT EXISTS upsolve_problem_nudges (
+                user_id TEXT,
+                problem_id TEXT,
+                PRIMARY KEY (user_id, problem_id)
+            )
+        ''')
+        # upsolve_optout allows users to disable the feature for themselves
+        cf_common.user_db.conn.execute('''
+            CREATE TABLE IF NOT EXISTS upsolve_optout (
+                user_id TEXT PRIMARY KEY
+            )
+        ''')
+        cf_common.user_db.conn.commit()
 
     @commands.group(brief='Automated upsolve reminders', invoke_without_command=True)
     async def upsolve(self, ctx):
