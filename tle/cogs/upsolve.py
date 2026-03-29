@@ -52,9 +52,9 @@ class UnfinishedBusiness(commands.Cog):
         if not attempted_unsolved:
             return await msg.edit(content=f"✅ {ctx.author.mention}, wow! You have successfully solved every problem you've attempted recently. Great job!")
             
-        # Pick the easiest unsolved problem based on rating (fallback to 9999 if no rating)
+        # Pick the easiest unsolved problem based on rating (fallback to 9999 if no rating or rating is None)
         candidates = list(attempted_unsolved.values())
-        candidates.sort(key=lambda p: getattr(p, 'rating', 9999))
+        candidates.sort(key=lambda p: getattr(p, 'rating', None) or 9999)
         
         missed_problem = candidates[0]
         
