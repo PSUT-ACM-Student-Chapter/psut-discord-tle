@@ -14,15 +14,6 @@ class WeeklyWrapUp(commands.Cog):
         self.bot = bot
         self.logger = logging.getLogger(self.__class__.__name__)
         
-        # Table to store which channel the wrap-up should be posted in for each guild
-        cf_common.user_db.conn.execute('''
-            CREATE TABLE IF NOT EXISTS wrapup_channels (
-                guild_id TEXT PRIMARY KEY,
-                channel_id TEXT
-            )
-        ''')
-        cf_common.user_db.conn.commit()
-
         # Runs every day at 23:00 UTC (We will filter for Sunday inside the loop)
         self.weekly_report_task.start()
 
@@ -72,6 +63,15 @@ class WeeklyWrapUp(commands.Cog):
     @weekly_report_task.before_loop
     async def before_weekly_report_task(self):
         await self.bot.wait_until_ready()
+        
+        # Table to store which channel the wrap-up should be posted in for each guild
+        cf_common.user_db.conn.execute('''
+            CREATE TABLE IF NOT EXISTS wrapup_channels (
+                guild_id TEXT PRIMARY KEY,
+                channel_id TEXT
+            )
+        ''')
+        cf_common.user_db.conn.commit()
 
     async def _generate_and_post_report(self, guild_id, channel_id):
         guild = self.bot.get_guild(guild_id)
@@ -182,7 +182,7 @@ class WeeklyWrapUp(commands.Cog):
 
         # Build the Embed!
         embed = discord.Embed(
-            title="📅 PSUT ACM Weekly Wrap-Up",
+            title="📅 Weekly Wrap-Up",
             description="Here is the week in review for our competitive programming chapter! Great work everyone!",
             color=discord.Color.purple(),
             timestamp=datetime.datetime.now(datetime.timezone.utc)
