@@ -26,7 +26,12 @@ BADGE_DESCRIPTIONS = {
     # --- New Hard Badges ---
     'Flawless Conqueror 👑': 'Got an Accepted solution on a problem with index E or higher on the very first attempt.',
     'Archaeologist 🦕': 'Solved a problem from the first 50 Codeforces rounds (Contest ID <= 50).',
-    'Flash ⚡⚡': 'Got an Accepted solution with exactly 0ms execution time.'
+    'Flash ⚡⚡': 'Got an Accepted solution with exactly 0ms execution time.',
+    
+    # --- Number Theory Badges ---
+    'Euler\'s Disciple 🧮': 'Got an Accepted solution on a "number theory" problem rated 2000 or higher.',
+    'Palindromic ID 🔄': 'Got an Accepted solution on a palindromic submission ID (reads the same forwards and backwards).',
+    'Power of Two 💻': 'Got an Accepted solution on a submission ID that is a perfect power of two.'
 }
 
 def is_prime(n):
@@ -271,6 +276,25 @@ class Streaks(commands.Cog):
                     new_badges_awarded.append(prime_badge)
                     existing_badges.add(prime_badge)
 
+                # --- NEW NUMBER THEORY BADGES ---
+                if 'Euler\'s Disciple 🧮' not in existing_badges:
+                    if s.problem.tags and 'number theory' in s.problem.tags and getattr(s.problem, 'rating', 0) >= 2000:
+                        new_badges_awarded.append('Euler\'s Disciple 🧮')
+                        existing_badges.add('Euler\'s Disciple 🧮')
+                        
+                if not any(b.startswith('Palindromic ID 🔄') for b in existing_badges) and getattr(s, 'id', None):
+                    id_str = str(s.id)
+                    if id_str == id_str[::-1]:
+                        pal_badge = f'Palindromic ID 🔄 (ID: {s.id})'
+                        new_badges_awarded.append(pal_badge)
+                        existing_badges.add(pal_badge)
+                        
+                if not any(b.startswith('Power of Two 💻') for b in existing_badges) and getattr(s, 'id', None):
+                    if (s.id & (s.id - 1) == 0) and s.id > 0:
+                        pow_badge = f'Power of Two 💻 (ID: {s.id})'
+                        new_badges_awarded.append(pow_badge)
+                        existing_badges.add(pow_badge)
+
                 # --- NEW HARD BADGES LOGIC ---
                 if 'Flawless Conqueror 👑' not in existing_badges:
                     # 'E' or higher character codes (e.g. E1, E, F, G) on the first attempt
@@ -456,8 +480,13 @@ class Streaks(commands.Cog):
         embed.description = "\n".join([f"{'🥇' if i==0 else '🥈' if i==1 else '🥉' if i==2 else '🏅'} **{n}** - {c} days (Max: {m})" for i, (n, c, m) in enumerate(board[:10])])
         await ctx.send(embed=embed)
 
-    @commands.command(brief='View your earned CP badges')
-    async def badges(self, ctx, *, member_or_handle: typing.Union[discord.Member, str] = None):
+    @commands.group(name='badge', aliases=['badges'], brief='Badge commands', invoke_without_command=True)
+    async def badge_group(self, ctx):
+        """Manage and view your badges. Use `;badge find <handle>` or `;badge all`."""
+        await ctx.send_help(ctx.command)
+
+    @badge_group.command(name='find', brief='View your earned CP badges')
+    async def badge_find(self, ctx, *, member_or_handle: typing.Union[discord.Member, str] = None):
         """Displays achievement badges from the database."""
         self._ensure_tables()
         user_id, handle, mention_str = await self._resolve_user(ctx, member_or_handle)
@@ -487,8 +516,8 @@ class Streaks(commands.Cog):
                 
         await ctx.send(embed=embed)
 
-    @commands.command(name='allbadges', brief='List all available badges')
-    async def allbadges(self, ctx):
+    @badge_group.command(name='all', brief='List all available badges')
+    async def badge_all(self, ctx):
         """Displays a list of all possible achievements you can earn."""
         embed = discord.Embed(
             title="🏆 All Available Codeforces Badges", 
