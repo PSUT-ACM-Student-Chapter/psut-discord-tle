@@ -481,9 +481,10 @@ class Streaks(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.group(name='badge', aliases=['badges'], brief='Badge commands', invoke_without_command=True)
-    async def badge_group(self, ctx):
-        """Manage and view your badges. Use `;badge find <handle>` or `;badge all`."""
-        await ctx.send_help(ctx.command)
+    async def badge_group(self, ctx, *, member_or_handle: typing.Union[discord.Member, str] = None):
+        """Manage and view your badges. Use `;badge [handle]`, `;badge find <handle>`, or `;badge all`."""
+        # If no valid subcommand is passed (e.g. `all` or `find`), it will default to the `find` behavior.
+        await ctx.invoke(self.badge_find, member_or_handle=member_or_handle)
 
     @badge_group.command(name='find', brief='View your earned CP badges')
     async def badge_find(self, ctx, *, member_or_handle: typing.Union[discord.Member, str] = None):
