@@ -31,7 +31,14 @@ BADGE_DESCRIPTIONS = {
     # --- Number Theory Badges ---
     'Euler\'s Disciple 🧮': 'Got an Accepted solution on a "number theory" problem rated 2000 or higher.',
     'Palindromic ID 🔄': 'Got an Accepted solution on a palindromic submission ID (reads the same forwards and backwards).',
-    'Power of Two 💻': 'Got an Accepted solution on a submission ID that is a perfect power of two.'
+    'Power of Two 💻': 'Got an Accepted solution on a submission ID that is a perfect power of two.',
+    
+    # --- Fun Badges ---
+    'Devil\'s Luck 😈': 'Got an Accepted solution on a submission ID containing "666".',
+    'Leet Coder 👨‍💻': 'Got an Accepted solution on a submission ID containing "1337".',
+    'Memory Hog 🐘': 'Got an Accepted solution that consumed over 100 MB of memory.',
+    'Unlucky 13 🐈‍⬛': 'Got an Accepted solution on a submission ID ending in 13.',
+    'Weekend Warrior ⚔️': 'Got an Accepted solution on a weekend (Saturday or Sunday).'
 }
 
 def is_prime(n):
@@ -261,7 +268,9 @@ class Streaks(commands.Cog):
                 if 'Early Bird 🌅' not in existing_badges and 5 <= dt.hour < 8:
                     new_badges_awarded.append('Early Bird 🌅'); existing_badges.add('Early Bird 🌅')
                 if 'Speed Demon ⚡' not in existing_badges and s.author.participantType == 'CONTESTANT':
-                    if getattr(s, 'relativeTimeSeconds', 9999) <= 300 and s.problem.index.startswith('A'):
+                    rts = getattr(s, 'relativeTimeSeconds', 9999)
+                    if rts is None: rts = 9999
+                    if rts <= 300 and s.problem.index.startswith('A'):
                         new_badges_awarded.append('Speed Demon ⚡'); existing_badges.add('Speed Demon ⚡')
                 if 'Sniper 🎯' not in existing_badges and consecutive_acs >= 5:
                     new_badges_awarded.append('Sniper 🎯'); existing_badges.add('Sniper 🎯')
@@ -278,7 +287,9 @@ class Streaks(commands.Cog):
 
                 # --- NEW NUMBER THEORY BADGES ---
                 if 'Euler\'s Disciple 🧮' not in existing_badges:
-                    if s.problem.tags and 'number theory' in s.problem.tags and getattr(s.problem, 'rating', 0) >= 2000:
+                    rating = getattr(s.problem, 'rating', 0)
+                    if rating is None: rating = 0
+                    if s.problem.tags and 'number theory' in s.problem.tags and rating >= 2000:
                         new_badges_awarded.append('Euler\'s Disciple 🧮')
                         existing_badges.add('Euler\'s Disciple 🧮')
                         
@@ -303,7 +314,9 @@ class Streaks(commands.Cog):
                         existing_badges.add('Flawless Conqueror 👑')
                         
                 if 'Archaeologist 🦕' not in existing_badges:
-                    if getattr(s.problem, 'contestId', 9999) <= 50:
+                    cid = getattr(s.problem, 'contestId', 9999)
+                    if cid is None: cid = 9999
+                    if cid <= 50:
                         new_badges_awarded.append('Archaeologist 🦕')
                         existing_badges.add('Archaeologist 🦕')
                         
@@ -311,6 +324,37 @@ class Streaks(commands.Cog):
                     if getattr(s, 'timeConsumedMillis', -1) == 0:
                         new_badges_awarded.append('Flash ⚡⚡')
                         existing_badges.add('Flash ⚡⚡')
+                        
+                # --- NEW FUN BADGES LOGIC ---
+                if not any(b.startswith('Devil\'s Luck 😈') for b in existing_badges) and getattr(s, 'id', None):
+                    if '666' in str(s.id):
+                        devils_badge = f'Devil\'s Luck 😈 (ID: {s.id})'
+                        new_badges_awarded.append(devils_badge)
+                        existing_badges.add(devils_badge)
+                        
+                if not any(b.startswith('Leet Coder 👨‍💻') for b in existing_badges) and getattr(s, 'id', None):
+                    if '1337' in str(s.id):
+                        leet_badge = f'Leet Coder 👨‍💻 (ID: {s.id})'
+                        new_badges_awarded.append(leet_badge)
+                        existing_badges.add(leet_badge)
+                        
+                if 'Memory Hog 🐘' not in existing_badges:
+                    mem_bytes = getattr(s, 'memoryConsumedBytes', 0)
+                    if mem_bytes is None: mem_bytes = 0
+                    if mem_bytes > 100 * 1024 * 1024:  # Over 100 MB
+                        new_badges_awarded.append('Memory Hog 🐘')
+                        existing_badges.add('Memory Hog 🐘')
+                        
+                if 'Unlucky 13 🐈‍⬛' not in existing_badges and getattr(s, 'id', None):
+                    if s.id % 100 == 13:
+                        new_badges_awarded.append('Unlucky 13 🐈‍⬛')
+                        existing_badges.add('Unlucky 13 🐈‍⬛')
+                        
+                if 'Weekend Warrior ⚔️' not in existing_badges:
+                    if dt.weekday() >= 5:  # 5 is Saturday, 6 is Sunday
+                        new_badges_awarded.append('Weekend Warrior ⚔️')
+                        existing_badges.add('Weekend Warrior ⚔️')
+                        
             else:
                 consecutive_acs = 0
                 problem_fails[p_id] = problem_fails.get(p_id, 0) + 1
