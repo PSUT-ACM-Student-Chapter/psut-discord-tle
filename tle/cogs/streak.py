@@ -21,7 +21,12 @@ BADGE_DESCRIPTIONS = {
     'Math Whiz 🧮': 'Solved a problem with the "math" tag.',
     'Graph Master 🕸️': 'Solved a problem with the "graphs" or "trees" tag.',
     'Prime 🔢': 'Got an Accepted solution on a prime numbered submission ID.',
-    'Polyglot 🗣️': 'Got Accepted solutions in 3 or more different programming languages recently.'
+    'Polyglot 🗣️': 'Got Accepted solutions in 3 or more different programming languages recently.',
+    
+    # --- New Hard Badges ---
+    'Flawless Conqueror 👑': 'Got an Accepted solution on a problem with index E or higher on the very first attempt.',
+    'Archaeologist 🦕': 'Solved a problem from the first 50 Codeforces rounds (Contest ID <= 50).',
+    'Flash ⚡⚡': 'Got an Accepted solution with exactly 0ms execution time.'
 }
 
 def is_prime(n):
@@ -259,8 +264,29 @@ class Streaks(commands.Cog):
                     new_badges_awarded.append('Persistent 😤'); existing_badges.add('Persistent 😤')
                 if 'Math Whiz 🧮' not in existing_badges and s.problem.tags and 'math' in s.problem.tags:
                     new_badges_awarded.append('Math Whiz 🧮'); existing_badges.add('Math Whiz 🧮')
-                if 'Prime 🔢' not in existing_badges and getattr(s, 'id', None) and is_prime(s.id):
-                    new_badges_awarded.append('Prime 🔢'); existing_badges.add('Prime 🔢')
+                    
+                # Updated Prime Logic (Include ID, check if they already have any Prime badge)
+                if not any(b.startswith('Prime 🔢') for b in existing_badges) and getattr(s, 'id', None) and is_prime(s.id):
+                    prime_badge = f'Prime 🔢 (ID: {s.id})'
+                    new_badges_awarded.append(prime_badge)
+                    existing_badges.add(prime_badge)
+
+                # --- NEW HARD BADGES LOGIC ---
+                if 'Flawless Conqueror 👑' not in existing_badges:
+                    # 'E' or higher character codes (e.g. E1, E, F, G) on the first attempt
+                    if s.problem.index and s.problem.index[0] >= 'E' and problem_fails.get(p_id, 0) == 0:
+                        new_badges_awarded.append('Flawless Conqueror 👑')
+                        existing_badges.add('Flawless Conqueror 👑')
+                        
+                if 'Archaeologist 🦕' not in existing_badges:
+                    if getattr(s.problem, 'contestId', 9999) <= 50:
+                        new_badges_awarded.append('Archaeologist 🦕')
+                        existing_badges.add('Archaeologist 🦕')
+                        
+                if 'Flash ⚡⚡' not in existing_badges:
+                    if getattr(s, 'timeConsumedMillis', -1) == 0:
+                        new_badges_awarded.append('Flash ⚡⚡')
+                        existing_badges.add('Flash ⚡⚡')
             else:
                 consecutive_acs = 0
                 problem_fails[p_id] = problem_fails.get(p_id, 0) + 1
@@ -454,9 +480,25 @@ class Streaks(commands.Cog):
             embed.description = "No badges earned yet."
         else:
             for badge, date in rows:
-                desc = "Maintained a consistent daily AC streak." if badge.startswith("Streak") else BADGE_DESCRIPTIONS.get(badge, "Special achievement.")
+                # Strip dynamic IDs (e.g., from Prime badge) for dictionary lookup
+                base_badge = badge.split(' (ID:')[0] if ' (ID:' in badge else badge
+                desc = "Maintained a consistent daily AC streak." if badge.startswith("Streak") else BADGE_DESCRIPTIONS.get(base_badge, "Special achievement.")
                 embed.add_field(name=badge, value=f"{desc}\n*Earned: {date}*", inline=False)
                 
+        await ctx.send(embed=embed)
+
+    @commands.command(name='allbadges', brief='List all available badges')
+    async def allbadges(self, ctx):
+        """Displays a list of all possible achievements you can earn."""
+        embed = discord.Embed(
+            title="🏆 All Available Codeforces Badges", 
+            description="Here are all the special badges you can earn. Keep solving problems to unlock them all! *(Note: There are also dynamic streak badges for keeping your daily AC streak alive!)*",
+            color=discord.Color.blue()
+        )
+        
+        for badge, desc in BADGE_DESCRIPTIONS.items():
+            embed.add_field(name=badge, value=desc, inline=False)
+            
         await ctx.send(embed=embed)
 
 async def setup(bot):
