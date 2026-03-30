@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import logging
 import math
+import typing
 
 import discord
 from discord.ext import commands, tasks
@@ -302,16 +303,45 @@ class Streaks(commands.Cog):
         today_ac = (last_ac_date_str == today.strftime('%Y-%m-%d'))
         return curr_streak, max_streak, today_ac, new_badges_awarded
 
+    async def _resolve_user(self, ctx, member_or_handle: typing.Union[discord.Member, str] = None):
+        """Resolves a Discord member or CF handle string into (user_id, handle, mention_str)."""
+        if member_or_handle is None:
+            member = ctx.author
+            handle = cf_common.user_db.get_handle(member.id, ctx.guild.id)
+            if not handle:
+                await ctx.send(f"{member.display_name} has not identified their Codeforces handle. Use `;handle set`.")
+                return None, None, None
+            return member.id, handle, member.mention
+            
+        if isinstance(member_or_handle, discord.Member):
+            member = member_or_handle
+            handle = cf_common.user_db.get_handle(member.id, ctx.guild.id)
+            if not handle:
+                await ctx.send(f"{member.display_name} has not identified their Codeforces handle.")
+                return None, None, None
+            return member.id, handle, member.mention
+            
+        # It's a string, treat as handle and attempt to locate it in the DB
+        handle = member_or_handle
+        row = cf_common.user_db.conn.execute(
+            "SELECT user_id FROM user_handle WHERE LOWER(handle) = LOWER(?)", (handle,)
+        ).fetchone()
+        
+        if not row:
+            await ctx.send(f"Could not find any linked user for handle `{handle}`. They must be registered with the bot.")
+            return None, None, None
+            
+        return int(row[0]), handle, f"**{handle}**"
+
     @commands.group(brief='Daily AC Streak commands', invoke_without_command=True)
-    async def streak(self, ctx, member: discord.Member = None):
+    async def streak(self, ctx, *, member_or_handle: typing.Union[discord.Member, str] = None):
         """Shows your current consecutive days of solving Codeforces problems."""
-        member = member or ctx.author
-        handle = cf_common.user_db.get_handle(member.id, ctx.guild.id)
-        if not handle:
-            return await ctx.send(f"{member.display_name} has not identified their Codeforces handle. Use `;handle set`.")
+        user_id, handle, mention_str = await self._resolve_user(ctx, member_or_handle)
+        if not user_id: 
+            return
 
         async with ctx.typing():
-            current_streak, max_streak, today_ac, new_badges = await self._update_user_streak(member.id, handle)
+            current_streak, max_streak, today_ac, new_badges = await self._update_user_streak(user_id, handle)
 
         embed = discord.Embed(
             title=f"🔥 Streak for {handle} 🔥",
@@ -330,7 +360,7 @@ class Streaks(commands.Cog):
 
         await ctx.send(embed=embed)
         if new_badges:
-            await ctx.send(f"🎉 **Achievement Unlocked!** {member.mention} earned: **{', '.join(new_badges)}**!")
+            await ctx.send(f"🎉 **Achievement Unlocked!** {mention_str} earned: **{', '.join(new_badges)}**!")
 
     @streak.command(name='update')
     async def streak_update(self, ctx):
@@ -345,7 +375,7 @@ class Streaks(commands.Cog):
         cf_common.user_db.conn.commit()
         
         await self._update_user_streak(ctx.author.id, handle, force_refresh=True)
-        await self.streak(ctx, ctx.author)
+        await self.streak(ctx)
 
     @streak.command(name='updateall')
     @commands.has_role(constants.TLE_ADMIN)
@@ -401,21 +431,22 @@ class Streaks(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(brief='View your earned CP badges')
-    async def badges(self, ctx, member: discord.Member = None):
+    async def badges(self, ctx, *, member_or_handle: typing.Union[discord.Member, str] = None):
         """Displays achievement badges from the database."""
         self._ensure_tables()
-        member = member or ctx.author
-        handle = cf_common.user_db.get_handle(member.id, ctx.guild.id)
-        if not handle: return await ctx.send(f"{member.display_name} has no handle set.")
+        user_id, handle, mention_str = await self._resolve_user(ctx, member_or_handle)
+        if not user_id: 
+            return
             
         async with ctx.typing():
             # Quick sync to see if there are missing badges.
-            _, _, _, new_badges = await self._update_user_streak(member.id, handle)
-            if new_badges: await ctx.send(f"🎉 **Achievement Unlocked!** {member.mention} earned: **{', '.join(new_badges)}**!")
+            _, _, _, new_badges = await self._update_user_streak(user_id, handle)
+            if new_badges: 
+                await ctx.send(f"🎉 **Achievement Unlocked!** {mention_str} earned: **{', '.join(new_badges)}**!")
 
             rows = cf_common.user_db.conn.execute(
                 "SELECT badge_name, awarded_date FROM user_badges WHERE user_id = ? ORDER BY awarded_date DESC", 
-                (str(member.id),)
+                (str(user_id),)
             ).fetchall()
             
         embed = discord.Embed(title=f"🏅 Achievements for {handle}", color=discord.Color.gold())
