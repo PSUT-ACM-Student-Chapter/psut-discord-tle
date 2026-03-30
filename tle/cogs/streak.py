@@ -240,7 +240,7 @@ class Streaks(commands.Cog):
                 "SELECT badge_name FROM user_badges WHERE user_id = ?", (user_id_str,)
             ).fetchall()
         }
-        new_badges_awarded = []
+        new_badges_awarded = [] # Stores tuples of (badge_name, submission_date)
         
         consecutive_acs = 0 
         problem_fails = {}
@@ -251,6 +251,7 @@ class Streaks(commands.Cog):
             
             p_id = f"{s.problem.contestId}{s.problem.index}"
             dt = datetime.datetime.fromtimestamp(s.creationTimeSeconds, datetime.timezone.utc)
+            sub_date_str = dt.strftime('%Y-%m-%d')
 
             if s.verdict == 'OK':
                 consecutive_acs += 1
@@ -264,25 +265,25 @@ class Streaks(commands.Cog):
 
                 # Badge Logic Execution
                 if 'Night Owl 🦇' not in existing_badges and 2 <= dt.hour < 5:
-                    new_badges_awarded.append('Night Owl 🦇'); existing_badges.add('Night Owl 🦇')
+                    new_badges_awarded.append(('Night Owl 🦇', sub_date_str)); existing_badges.add('Night Owl 🦇')
                 if 'Early Bird 🌅' not in existing_badges and 5 <= dt.hour < 8:
-                    new_badges_awarded.append('Early Bird 🌅'); existing_badges.add('Early Bird 🌅')
+                    new_badges_awarded.append(('Early Bird 🌅', sub_date_str)); existing_badges.add('Early Bird 🌅')
                 if 'Speed Demon ⚡' not in existing_badges and s.author.participantType == 'CONTESTANT':
                     rts = getattr(s, 'relativeTimeSeconds', 9999)
                     if rts is None: rts = 9999
                     if rts <= 300 and s.problem.index.startswith('A'):
-                        new_badges_awarded.append('Speed Demon ⚡'); existing_badges.add('Speed Demon ⚡')
+                        new_badges_awarded.append(('Speed Demon ⚡', sub_date_str)); existing_badges.add('Speed Demon ⚡')
                 if 'Sniper 🎯' not in existing_badges and consecutive_acs >= 5:
-                    new_badges_awarded.append('Sniper 🎯'); existing_badges.add('Sniper 🎯')
+                    new_badges_awarded.append(('Sniper 🎯', sub_date_str)); existing_badges.add('Sniper 🎯')
                 if 'Persistent 😤' not in existing_badges and problem_fails.get(p_id, 0) >= 5:
-                    new_badges_awarded.append('Persistent 😤'); existing_badges.add('Persistent 😤')
+                    new_badges_awarded.append(('Persistent 😤', sub_date_str)); existing_badges.add('Persistent 😤')
                 if 'Math Whiz 🧮' not in existing_badges and s.problem.tags and 'math' in s.problem.tags:
-                    new_badges_awarded.append('Math Whiz 🧮'); existing_badges.add('Math Whiz 🧮')
+                    new_badges_awarded.append(('Math Whiz 🧮', sub_date_str)); existing_badges.add('Math Whiz 🧮')
                     
                 # Updated Prime Logic (Include ID, check if they already have any Prime badge)
                 if not any(b.startswith('Prime 🔢') for b in existing_badges) and getattr(s, 'id', None) and is_prime(s.id):
                     prime_badge = f'Prime 🔢 (ID: {s.id})'
-                    new_badges_awarded.append(prime_badge)
+                    new_badges_awarded.append((prime_badge, sub_date_str))
                     existing_badges.add(prime_badge)
 
                 # --- NEW NUMBER THEORY BADGES ---
@@ -290,78 +291,80 @@ class Streaks(commands.Cog):
                     rating = getattr(s.problem, 'rating', 0)
                     if rating is None: rating = 0
                     if s.problem.tags and 'number theory' in s.problem.tags and rating >= 2000:
-                        new_badges_awarded.append('Euler\'s Disciple 🧮')
+                        new_badges_awarded.append(('Euler\'s Disciple 🧮', sub_date_str))
                         existing_badges.add('Euler\'s Disciple 🧮')
                         
                 if not any(b.startswith('Palindromic ID 🔄') for b in existing_badges) and getattr(s, 'id', None):
                     id_str = str(s.id)
                     if id_str == id_str[::-1]:
                         pal_badge = f'Palindromic ID 🔄 (ID: {s.id})'
-                        new_badges_awarded.append(pal_badge)
+                        new_badges_awarded.append((pal_badge, sub_date_str))
                         existing_badges.add(pal_badge)
                         
                 if not any(b.startswith('Power of Two 💻') for b in existing_badges) and getattr(s, 'id', None):
                     if (s.id & (s.id - 1) == 0) and s.id > 0:
                         pow_badge = f'Power of Two 💻 (ID: {s.id})'
-                        new_badges_awarded.append(pow_badge)
+                        new_badges_awarded.append((pow_badge, sub_date_str))
                         existing_badges.add(pow_badge)
 
                 # --- NEW HARD BADGES LOGIC ---
                 if 'Flawless Conqueror 👑' not in existing_badges:
                     # 'E' or higher character codes (e.g. E1, E, F, G) on the first attempt
                     if s.problem.index and s.problem.index[0] >= 'E' and problem_fails.get(p_id, 0) == 0:
-                        new_badges_awarded.append('Flawless Conqueror 👑')
+                        new_badges_awarded.append(('Flawless Conqueror 👑', sub_date_str))
                         existing_badges.add('Flawless Conqueror 👑')
                         
                 if 'Archaeologist 🦕' not in existing_badges:
                     cid = getattr(s.problem, 'contestId', 9999)
                     if cid is None: cid = 9999
                     if cid <= 50:
-                        new_badges_awarded.append('Archaeologist 🦕')
+                        new_badges_awarded.append(('Archaeologist 🦕', sub_date_str))
                         existing_badges.add('Archaeologist 🦕')
                         
                 if 'Flash ⚡⚡' not in existing_badges:
                     if getattr(s, 'timeConsumedMillis', -1) == 0:
-                        new_badges_awarded.append('Flash ⚡⚡')
+                        new_badges_awarded.append(('Flash ⚡⚡', sub_date_str))
                         existing_badges.add('Flash ⚡⚡')
                         
                 # --- NEW FUN BADGES LOGIC ---
                 if not any(b.startswith('Devil\'s Luck 😈') for b in existing_badges) and getattr(s, 'id', None):
                     if '666' in str(s.id):
                         devils_badge = f'Devil\'s Luck 😈 (ID: {s.id})'
-                        new_badges_awarded.append(devils_badge)
+                        new_badges_awarded.append((devils_badge, sub_date_str))
                         existing_badges.add(devils_badge)
                         
                 if not any(b.startswith('Leet Coder 👨‍💻') for b in existing_badges) and getattr(s, 'id', None):
                     if '1337' in str(s.id):
                         leet_badge = f'Leet Coder 👨‍💻 (ID: {s.id})'
-                        new_badges_awarded.append(leet_badge)
+                        new_badges_awarded.append((leet_badge, sub_date_str))
                         existing_badges.add(leet_badge)
                         
                 if 'Memory Hog 🐘' not in existing_badges:
                     mem_bytes = getattr(s, 'memoryConsumedBytes', 0)
                     if mem_bytes is None: mem_bytes = 0
                     if mem_bytes > 100 * 1024 * 1024:  # Over 100 MB
-                        new_badges_awarded.append('Memory Hog 🐘')
+                        new_badges_awarded.append(('Memory Hog 🐘', sub_date_str))
                         existing_badges.add('Memory Hog 🐘')
                         
                 if 'Unlucky 13 🐈‍⬛' not in existing_badges and getattr(s, 'id', None):
                     if s.id % 100 == 13:
-                        new_badges_awarded.append('Unlucky 13 🐈‍⬛')
+                        new_badges_awarded.append(('Unlucky 13 🐈‍⬛', sub_date_str))
                         existing_badges.add('Unlucky 13 🐈‍⬛')
                         
                 if 'Weekend Warrior ⚔️' not in existing_badges:
                     if dt.weekday() >= 5:  # 5 is Saturday, 6 is Sunday
-                        new_badges_awarded.append('Weekend Warrior ⚔️')
+                        new_badges_awarded.append(('Weekend Warrior ⚔️', sub_date_str))
                         existing_badges.add('Weekend Warrior ⚔️')
                         
             else:
                 consecutive_acs = 0
                 problem_fails[p_id] = problem_fails.get(p_id, 0) + 1
 
-        # Calculate final state badges
+        # Calculate aggregate state badges, falling back to the last known AC date
+        fallback_date_str = ac_dates[-1].strftime('%Y-%m-%d') if ac_dates else today.strftime('%Y-%m-%d')
+
         if 'Polyglot 🗣️' not in existing_badges and len(ac_languages) >= 3:
-            new_badges_awarded.append('Polyglot 🗣️')
+            new_badges_awarded.append(('Polyglot 🗣️', fallback_date_str))
             existing_badges.add('Polyglot 🗣️')
 
         if max_streak > 0:
@@ -369,7 +372,7 @@ class Streaks(commands.Cog):
             streak_badge_name = f"Streak 🔥: {highest_pow2} Days"
             if streak_badge_name not in existing_badges:
                 cf_common.user_db.conn.execute("DELETE FROM user_badges WHERE user_id = ? AND badge_name LIKE 'Streak 🔥: %'", (user_id_str,))
-                new_badges_awarded.append(streak_badge_name)
+                new_badges_awarded.append((streak_badge_name, fallback_date_str))
 
         # Update last_id cursor
         new_last_id = max([getattr(s, 'id', 0) for s in subs_to_process] + [last_processed_id]) if subs_to_process else last_processed_id
@@ -385,17 +388,19 @@ class Streaks(commands.Cog):
             last_id=excluded.last_id
         ''', (user_id_str, curr_streak, max_streak, last_ac_date_str, new_last_id))
 
-        award_date = today.strftime('%Y-%m-%d')
-        for b in new_badges_awarded:
+        for b_name, b_date in new_badges_awarded:
             cf_common.user_db.conn.execute(
                 "INSERT OR IGNORE INTO user_badges (user_id, badge_name, awarded_date) VALUES (?, ?, ?)",
-                (user_id_str, b, award_date)
+                (user_id_str, b_name, b_date)
             )
         
         cf_common.user_db.conn.commit()
         
         today_ac = (last_ac_date_str == today.strftime('%Y-%m-%d'))
-        return curr_streak, max_streak, today_ac, new_badges_awarded
+        
+        # Return only the badge names (strings) so the commands can join and display them normally
+        badge_names_only = [b[0] for b in new_badges_awarded]
+        return curr_streak, max_streak, today_ac, badge_names_only
 
     async def _resolve_user(self, ctx, member_or_handle: typing.Union[discord.Member, str] = None):
         """Resolves a Discord member or CF handle string into (user_id, handle, mention_str)."""
