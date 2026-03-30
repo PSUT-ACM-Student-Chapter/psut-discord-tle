@@ -39,31 +39,31 @@ class MonthlyGitGudPlot(commands.Cog):
         start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()
 
         try:
-            # Attempt to query the standard TLE gitgud table structure
+            # Query standard TLE schema where completed gitguds are tracked in 'challenge'
             query = '''
                 SELECT user_id
-                FROM gitgud
-                WHERE guild_id = ? AND time >= ?
+                FROM challenge
+                WHERE guild_id = ? AND finish_time >= ?
                 GROUP BY user_id
                 ORDER BY COUNT(*) DESC
                 LIMIT ?
             '''
-            res = cf_common.user_db.conn.execute(query, (str(ctx.guild.id), start_of_month, num_users)).fetchall()
+            res = cf_common.user_db.conn.execute(query, (ctx.guild.id, start_of_month, num_users)).fetchall()
         except Exception as e:
-            self.logger.warning(f"Error querying gitgud table with 'time', falling back: {e}")
+            self.logger.warning(f"Error querying 'challenge' table, falling back: {e}")
             try:
-                # Fallback for some forks that might use 'timestamp' instead of 'time'
+                # Fallback for specific custom tables that some forks might use
                 query = '''
                     SELECT user_id
-                    FROM gitgud
-                    WHERE guild_id = ? AND timestamp >= ?
+                    FROM mgg
+                    WHERE guild_id = ? AND finish_time >= ?
                     GROUP BY user_id
                     ORDER BY COUNT(*) DESC
                     LIMIT ?
                 '''
-                res = cf_common.user_db.conn.execute(query, (str(ctx.guild.id), start_of_month, num_users)).fetchall()
+                res = cf_common.user_db.conn.execute(query, (ctx.guild.id, start_of_month, num_users)).fetchall()
             except Exception as ex:
-                self.logger.error(f"Error querying gitgud table: {ex}")
+                self.logger.error(f"Error querying database: {ex}")
                 return await ctx.send(f"Failed to fetch git gudders from database. Check schema. Error: `{ex}`")
 
         if not res:
