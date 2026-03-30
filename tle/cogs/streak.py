@@ -531,5 +531,42 @@ class Streaks(commands.Cog):
             
         await ctx.send(embed=embed)
 
+    @badge_group.command(name='resetall', brief='Reset and recalculate all badges globally')
+    @commands.has_role(constants.TLE_ADMIN)
+    async def badge_resetall(self, ctx):
+        """[ADMIN] Wipes all badges from the database and recalculates them for everyone."""
+        await ctx.send("🚨 Wiping ALL badges from the database and forcing a complete recalculation...")
+        
+        self._ensure_tables()
+        # Wipe the badge table completely
+        cf_common.user_db.conn.execute("DELETE FROM user_badges")
+        cf_common.user_db.conn.commit()
+        
+        # Reuse the existing streak update_all logic with force=True
+        # This will set last_id = 0 for everyone and fetch full histories
+        await self.streak_update_all(ctx, force=True)
+
+    @badge_group.command(name='reset', brief='Reset and recalculate badges for a user')
+    @commands.has_role(constants.TLE_ADMIN)
+    async def badge_reset(self, ctx, *, member_or_handle: typing.Union[discord.Member, str] = None):
+        """[ADMIN] Wipes and recalculates badges for a specific user."""
+        self._ensure_tables()
+        user_id, handle, mention_str = await self._resolve_user(ctx, member_or_handle)
+        if not user_id: 
+            return
+            
+        await ctx.send(f"🚨 Wiping badges for {handle} and forcing a recalculation...")
+        
+        cf_common.user_db.conn.execute("DELETE FROM user_badges WHERE user_id = ?", (str(user_id),))
+        cf_common.user_db.conn.execute("UPDATE user_streak SET last_id = 0 WHERE user_id = ?", (str(user_id),))
+        cf_common.user_db.conn.commit()
+        
+        async with ctx.typing():
+            await self._update_user_streak(user_id, handle, force_refresh=True)
+            
+        await ctx.send(f"✅ Finished recalculating badges for {handle}!")
+        # Automatically display the new badges
+        await ctx.invoke(self.badge_find, member_or_handle=member_or_handle)
+
 async def setup(bot):
     await bot.add_cog(Streaks(bot))
