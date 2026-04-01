@@ -12,12 +12,14 @@ class FirstBlood(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.db_ready = asyncio.Event()
         
-        # Create tables synchronously when the cog loads
-        self._create_tables()
-
         # Start the background checker
         self.monitor_task.start()
+
+    async def cog_before_invoke(self, ctx):
+        # Prevent any commands in this cog from running until tables are created
+        await self.db_ready.wait()
 
     def _create_tables(self):
         # Table to store which channels are tracking which contests
@@ -182,6 +184,9 @@ class FirstBlood(commands.Cog):
     @monitor_task.before_loop
     async def before_monitor_task(self):
         await self.bot.wait_until_ready()
+        # Initialize tables safely after the bot and database connections are ready
+        self._create_tables()
+        self.db_ready.set()
 
 async def setup(bot):
     await bot.add_cog(FirstBlood(bot))
