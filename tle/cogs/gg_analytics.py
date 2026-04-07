@@ -85,21 +85,21 @@ class GitGudAnalytics(commands.Cog):
         conn = cf_common.user_db.conn
         cursor = conn.cursor()
         
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='gud'")
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='challenge'")
         if not cursor.fetchone():
-            return await ctx.send("❌ 'gud' table not found. Gitgud might not be initialized or active.")
+            return await ctx.send("❌ 'challenge' table not found. Gitgud might not be initialized or active.")
         
-        cursor.execute("PRAGMA table_info(gud)")
+        cursor.execute("PRAGMA table_info(challenge)")
         cols = [row[1] for row in cursor.fetchall()]
         
         if 'issue_time' not in cols or 'finish_time' not in cols:
-            return await ctx.send("❌ Unsupported schema: Missing time columns in `gud` table.")
+            return await ctx.send("❌ Unsupported schema: Missing time columns in `challenge` table.")
         
         if 'guild_id' in cols:
-            query = f"SELECT * FROM gud WHERE user_id = ? AND guild_id = ? AND finish_time IS NOT NULL"
+            query = f"SELECT * FROM challenge WHERE user_id = ? AND guild_id = ? AND finish_time IS NOT NULL"
             params = (member.id, ctx.guild.id)
         else:
-            query = f"SELECT * FROM gud WHERE user_id = ? AND finish_time IS NOT NULL"
+            query = f"SELECT * FROM challenge WHERE user_id = ? AND finish_time IS NOT NULL"
             params = (member.id,)
             
         cursor.execute(query, params)
@@ -113,47 +113,38 @@ class GitGudAnalytics(commands.Cog):
         rating_counts = defaultdict(int)
         solves_by_date = defaultdict(int)
 
-        cache_db_path = 'data/cache.db'
-        if not os.path.exists(cache_db_path):
-            return await ctx.send("❌ Internal cache database not found.")
+        # Retrieve ratings directly from TLE's memory cache to avoid DB locking and path issues
+        if not cf_common.cache2 or not cf_common.cache2.problem_cache:
+            return await ctx.send("❌ Internal problem cache not initialized.")
 
-        # Temporarily connect to cache.db to extract ratings natively
-        cache_conn = sqlite3.connect(cache_db_path)
-        cache_cursor = cache_conn.cursor()
-        
-        try:
-            cache_cursor.execute("PRAGMA table_info(problem)")
-            p_cols = [row[1] for row in cache_cursor.fetchall()]
-            cid_col = 'contestId' if 'contestId' in p_cols else 'contest_id'
+        problems = cf_common.cache2.problem_cache.problems
+        rating_by_cid_index = {(p.contestId, p.index): p.rating for p in problems if p.rating}
+        rating_by_name = {p.name: p.rating for p in problems if p.rating}
+
+        for t in tasks:
+            c_id = t.get('contest_id') or t.get('contestId')
+            # TLE typically uses p_index in the challenge table
+            idx = t.get('p_index') or t.get('problem_index') or t.get('index')
             
-            if 'rating' in p_cols:
-                for t in tasks:
-                    c_id = t.get('contest_id') or t.get('contestId')
-                    idx = t.get('problem_index') or t.get('index')
-                    
-                    if c_id and idx:
-                        cache_cursor.execute(f'SELECT rating FROM problem WHERE {cid_col} = ? AND "index" = ?', (c_id, idx))
-                        res = cache_cursor.fetchone()
-                    elif 'problem_name' in t:
-                        cache_cursor.execute('SELECT rating FROM problem WHERE name = ?', (t['problem_name'],))
-                        res = cache_cursor.fetchone()
-                    else:
-                        res = None
-                        
-                    if res and res[0]:
-                        rating = int(res[0])
-                        issue = t['issue_time']
-                        finish = t['finish_time']
-                        
-                        if finish >= issue:
-                            time_spent_hours = (finish - issue) / 3600.0
-                            time_spent_by_rating[rating].append(time_spent_hours)
-                        
-                        rating_counts[rating] += 1
-                        finish_date = datetime.datetime.fromtimestamp(finish).date()
-                        solves_by_date[finish_date] += 1
-        finally:
-            cache_conn.close()
+            rating = None
+            if c_id and idx:
+                # Contest IDs are usually integers, indexes are strings (like 'A', 'B1')
+                rating = rating_by_cid_index.get((int(c_id), str(idx)))
+            elif 'problem_name' in t:
+                rating = rating_by_name.get(t['problem_name'])
+                
+            if rating:
+                issue = t.get('issue_time')
+                finish = t.get('finish_time')
+                
+                if finish and issue and finish >= issue:
+                    time_spent_hours = (finish - issue) / 3600.0
+                    time_spent_by_rating[rating].append(time_spent_hours)
+                
+                rating_counts[rating] += 1
+                if finish:
+                    finish_date = datetime.datetime.fromtimestamp(finish).date()
+                    solves_by_date[finish_date] += 1
 
         if not rating_counts:
             return await ctx.send("⚠️ Found your GitGud history, but couldn't map the ratings. Cache might be empty.")
