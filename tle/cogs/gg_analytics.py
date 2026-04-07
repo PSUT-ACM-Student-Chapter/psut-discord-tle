@@ -71,7 +71,7 @@ class GitGudAnalytics(commands.Cog):
         plt.close(fig)
         return buf
 
-    @commands.command(aliases=['ggstats', 'ggplot'])
+    @commands.command(aliases=['ggstats'])
     async def gitgudplot(self, ctx, member: discord.Member = None):
         """Plots GitGud analytics: Time spent, rating distribution, and solving frequency.
         Usage: ;gitgudplot [member]
