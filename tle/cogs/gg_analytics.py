@@ -30,28 +30,38 @@ class GitGudAnalytics(commands.Cog):
         fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 15))
         fig.suptitle(f"GitGud Analytics for {member_name}{date_range_str}", fontsize=18, fontweight='bold', color='white')
 
-        # 1. Average Time Spent
+        # 1. Distribution of Time Spent (Boxplot)
         ratings1 = sorted(time_spent_by_rating.keys())
         if ratings1:
-            avg_times = [sum(time_spent_by_rating[r]) / len(time_spent_by_rating[r]) for r in ratings1]
-            
-            # Scatter points for individual solves
-            scatter_x = []
-            scatter_y = []
-            for r in ratings1:
-                for t in time_spent_by_rating[r]:
-                    scatter_x.append(str(r))
-                    scatter_y.append(t)
+            data = [time_spent_by_rating[r] for r in ratings1]
+            positions = range(len(ratings1))
 
-            ax1.scatter(scatter_x, scatter_y, alpha=0.5, color='#ff7f50', zorder=2, label='Individual Solves')
-            ax1.plot([str(r) for r in ratings1], avg_times, color='white', linewidth=2, marker='o', zorder=3, label='Average Time')
-            
-            ax1.set_title("Time Spent per Rating", fontsize=14)
+            # Create boxplot
+            bp = ax1.boxplot(data, positions=positions, patch_artist=True,
+                             boxprops=dict(facecolor='#ff7f50', color='white', alpha=0.7),
+                             capprops=dict(color='white'),
+                             whiskerprops=dict(color='white'),
+                             flierprops=dict(marker='o', markerfacecolor='#ff7f50', markeredgecolor='white', alpha=0.5, markersize=5),
+                             medianprops=dict(color='#3cb371', linewidth=2.5, label='Median Time'))
+
+            # Add the average line overlay
+            avg_times = [sum(times) / len(times) for times in data]
+            ax1.plot(positions, avg_times, color='white', linewidth=2, marker='D', markersize=5, zorder=3, label='Average Time')
+
+            ax1.set_title("Time Spent Distribution per Rating (Boxplot)", fontsize=14)
             ax1.set_xlabel("Problem Rating")
             ax1.set_ylabel("Time (Hours)")
-            ax1.tick_params(axis='x', rotation=45)
+            ax1.set_xticks(positions)
+            ax1.set_xticklabels([str(r) for r in ratings1], rotation=45)
             ax1.grid(axis='y', linestyle='--', alpha=0.3, zorder=1)
-            ax1.legend()
+            
+            # Custom legend to clarify boxplot components
+            handles, labels = ax1.get_legend_handles_labels()
+            # The median line is automatically added to handles via medianprops label, let's ensure it's clean
+            if 'Average Time' in labels and 'Median Time' in labels:
+                ax1.legend(loc='upper left')
+            else:
+                ax1.legend(['Average Time'], loc='upper left')
 
         # 2. Rating Distribution
         ratings2 = sorted(rating_counts.keys())
