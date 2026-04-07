@@ -192,6 +192,5 @@ class Todo(commands.Cog):
                     pass
                 break
 
-def setup(bot):
-    async def setup(bot):
-        await bot.add_cog(Todo(bot))
+async def setup(bot):
+    await bot.add_cog(Todo(bot))

@@ -173,6 +173,5 @@ class GitGudAnalytics(commands.Cog):
         await msg.delete()
         await ctx.send(file=discord.File(buf, filename=f'ggstats_{member.id}.png'))
 
-def setup(bot):
-    async def setup(bot):
-        await bot.add_cog(Todo(bot))
+async def setup(bot):
+    await bot.add_cog(Todo(bot))
