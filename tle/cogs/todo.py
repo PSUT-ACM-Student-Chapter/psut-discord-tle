@@ -1,7 +1,7 @@
 import os
 import asyncio
 import logging
-import aiosqlite
+import sqlite3
 import discord
 from discord.ext import commands
 
@@ -9,32 +9,31 @@ class Todo(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.db_conn = None
-        # Start DB initialization on load
-        self.bot.loop.create_task(self._init_db())
-
-    async def _init_db(self):
-        """Initializes the isolated TODO database."""
-        await self.bot.wait_until_ready()
+        
+        # Initialize DB directly with native sqlite3
         os.makedirs('data', exist_ok=True)
-        self.db_conn = await aiosqlite.connect('data/todo.db')
-        async with self.db_conn.cursor() as cursor:
-            await cursor.execute('''
-                CREATE TABLE IF NOT EXISTS user_todo (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    task TEXT NOT NULL,
-                    deadline TEXT,
-                    status INTEGER DEFAULT 0
-                )
-            ''')
-            await self.db_conn.commit()
+        self.db_conn = sqlite3.connect('data/todo.db', check_same_thread=False)
+        self._init_db()
+
+    def _init_db(self):
+        """Initializes the isolated TODO database."""
+        cursor = self.db_conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_todo (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                task TEXT NOT NULL,
+                deadline TEXT,
+                status INTEGER DEFAULT 0
+            )
+        ''')
+        self.db_conn.commit()
         self.logger.info("TODO Database initialized successfully.")
 
     def cog_unload(self):
         """Clean up the database connection when unloaded."""
         if self.db_conn:
-            self.bot.loop.create_task(self.db_conn.close())
+            self.db_conn.close()
 
     @commands.group(invoke_without_command=True, aliases=['todos'])
     async def todo(self, ctx):
@@ -50,12 +49,12 @@ class Todo(commands.Cog):
         task = parts[0].strip()
         deadline = parts[1].strip() if len(parts) > 1 else None
         
-        async with self.db_conn.cursor() as cursor:
-            await cursor.execute(
-                'INSERT INTO user_todo (user_id, task, deadline, status) VALUES (?, ?, ?, 0)',
-                (ctx.author.id, task, deadline)
-            )
-            await self.db_conn.commit()
+        cursor = self.db_conn.cursor()
+        cursor.execute(
+            'INSERT INTO user_todo (user_id, task, deadline, status) VALUES (?, ?, ?, 0)',
+            (ctx.author.id, task, deadline)
+        )
+        self.db_conn.commit()
             
         msg = f"✅ Task added: **{task}**"
         if deadline:
@@ -65,60 +64,56 @@ class Todo(commands.Cog):
     @todo.command(name='remove', aliases=['delete', 'rm'])
     async def todo_remove(self, ctx, task_id: int):
         """Remove a task from your list by its ID."""
-        async with self.db_conn.cursor() as cursor:
-            await cursor.execute(
-                'DELETE FROM user_todo WHERE id = ? AND user_id = ?',
-                (task_id, ctx.author.id)
-            )
-            if cursor.rowcount == 0:
-                return await ctx.send("❌ Task not found or you don't have permission to delete it.")
-            await self.db_conn.commit()
+        cursor = self.db_conn.cursor()
+        cursor.execute(
+            'DELETE FROM user_todo WHERE id = ? AND user_id = ?',
+            (task_id, ctx.author.id)
+        )
+        if cursor.rowcount == 0:
+            return await ctx.send("❌ Task not found or you don't have permission to delete it.")
+        self.db_conn.commit()
         await ctx.send(f"✅ Task #{task_id} removed successfully.")
 
     @todo.command(name='check', aliases=['done'])
     async def todo_check(self, ctx, task_id: int):
         """Manually mark a task as completed using its ID."""
-        async with self.db_conn.cursor() as cursor:
-            await cursor.execute(
-                'UPDATE user_todo SET status = 1 WHERE id = ? AND user_id = ?',
-                (task_id, ctx.author.id)
-            )
-            if cursor.rowcount == 0:
-                return await ctx.send("❌ Task not found.")
-            await self.db_conn.commit()
+        cursor = self.db_conn.cursor()
+        cursor.execute(
+            'UPDATE user_todo SET status = 1 WHERE id = ? AND user_id = ?',
+            (task_id, ctx.author.id)
+        )
+        if cursor.rowcount == 0:
+            return await ctx.send("❌ Task not found.")
+        self.db_conn.commit()
         await ctx.send(f"✅ Task #{task_id} marked as completed!")
 
     @todo.command(name='uncheck')
     async def todo_uncheck(self, ctx, task_id: int):
         """Manually mark a completed task as pending."""
-        async with self.db_conn.cursor() as cursor:
-            await cursor.execute(
-                'UPDATE user_todo SET status = 0 WHERE id = ? AND user_id = ?',
-                (task_id, ctx.author.id)
-            )
-            if cursor.rowcount == 0:
-                return await ctx.send("❌ Task not found.")
-            await self.db_conn.commit()
+        cursor = self.db_conn.cursor()
+        cursor.execute(
+            'UPDATE user_todo SET status = 0 WHERE id = ? AND user_id = ?',
+            (task_id, ctx.author.id)
+        )
+        if cursor.rowcount == 0:
+            return await ctx.send("❌ Task not found.")
+        self.db_conn.commit()
         await ctx.send(f"✅ Task #{task_id} marked as pending!")
 
     @todo.command(name='list', aliases=['show'])
     async def todo_list(self, ctx):
         """Show your interactive TODO list. React to check/uncheck tasks."""
-        if not self.db_conn:
-            return await ctx.send("⚠️ Database is still initializing. Please wait a moment.")
-
-        async with self.db_conn.cursor() as cursor:
-            await cursor.execute(
-                'SELECT id, task, deadline, status FROM user_todo WHERE user_id = ? ORDER BY status ASC, id ASC',
-                (ctx.author.id,)
-            )
-            tasks = await cursor.fetchall()
+        cursor = self.db_conn.cursor()
+        cursor.execute(
+            'SELECT id, task, deadline, status FROM user_todo WHERE user_id = ? ORDER BY status ASC, id ASC',
+            (ctx.author.id,)
+        )
+        tasks = cursor.fetchall()
 
         if not tasks:
             return await ctx.send("📝 Your TODO list is empty! Add tasks using `;todo add <task>`.")
 
         total_tasks = len(tasks)
-        # Limit to 10 tasks to perfectly match the 1-10 emoji reactions
         tasks = tasks[:10]
         
         embed = discord.Embed(title=f"📝 {ctx.author.display_name}'s TODO List", color=discord.Color.blue())
@@ -150,7 +145,6 @@ class Todo(commands.Cog):
 
         msg = await ctx.send(embed=embed)
         
-        # Add interactive reactions
         for emoji in task_mapping.keys():
             await msg.add_reaction(emoji)
         await msg.add_reaction("❌")
@@ -160,7 +154,6 @@ class Todo(commands.Cog):
 
         while True:
             try:
-                # Wait for user reaction
                 reaction, user = await self.bot.wait_for('reaction_add', timeout=60.0, check=check)
                 
                 if str(reaction.emoji) == "❌":
@@ -170,27 +163,22 @@ class Todo(commands.Cog):
                 task_id, current_status = task_mapping[str(reaction.emoji)]
                 new_status = 0 if current_status == 1 else 1
                 
-                # Update task status in database
-                async with self.db_conn.cursor() as cursor:
-                    await cursor.execute(
-                        'UPDATE user_todo SET status = ? WHERE id = ?',
-                        (new_status, task_id)
-                    )
-                    await self.db_conn.commit()
+                cursor.execute(
+                    'UPDATE user_todo SET status = ? WHERE id = ?',
+                    (new_status, task_id)
+                )
+                self.db_conn.commit()
                     
-                # Try to remove the user's reaction so they can click it again safely
                 try:
                     await msg.remove_reaction(reaction.emoji, user)
                 except discord.Forbidden:
                     pass
                     
-                # Fetch fresh data and refresh the embed
-                async with self.db_conn.cursor() as cursor:
-                    await cursor.execute(
-                        'SELECT id, task, deadline, status FROM user_todo WHERE user_id = ? ORDER BY status ASC, id ASC',
-                        (ctx.author.id,)
-                    )
-                    updated_tasks = await cursor.fetchall()
+                cursor.execute(
+                    'SELECT id, task, deadline, status FROM user_todo WHERE user_id = ? ORDER BY status ASC, id ASC',
+                    (ctx.author.id,)
+                )
+                updated_tasks = cursor.fetchall()
                     
                 total_tasks = len(updated_tasks)
                 updated_tasks = updated_tasks[:10]
@@ -198,7 +186,6 @@ class Todo(commands.Cog):
                 await msg.edit(embed=embed)
 
             except asyncio.TimeoutError:
-                # Remove reactions when the interaction times out
                 try:
                     await msg.clear_reactions()
                 except discord.Forbidden:
