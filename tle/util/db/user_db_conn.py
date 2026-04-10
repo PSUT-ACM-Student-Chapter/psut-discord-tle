@@ -305,7 +305,37 @@ class UserDbConn:
             )
             ''')
 
+        self.conn.execute('''
+            CREATE TABLE IF NOT EXISTS todo_list (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, task TEXT, status TEXT)
+        ''')
+
     # Helper functions.
+
+    def add_todo(self, user_id, task):
+        query = 'INSERT INTO todo_list (user_id, task, status) VALUES (?, ?, "active")'
+        self.conn.execute(query, (user_id, task))
+        self.conn.commit()
+
+    def get_active_todos(self, user_id):
+        query = 'SELECT id, task FROM todo_list WHERE user_id = ? AND status = "active"'
+        cur = self.conn.cursor()
+        cur.execute(query, (user_id,))
+        res = cur.fetchall()
+        cur.close()
+        return res
+
+    def get_completed_todos(self, user_id):
+        query = 'SELECT id, task FROM todo_list WHERE user_id = ? AND status = "completed"'
+        cur = self.conn.cursor()
+        cur.execute(query, (user_id,))
+        res = cur.fetchall()
+        cur.close()
+        return res
+
+    def mark_todo_done(self, task_id):
+        query = 'UPDATE todo_list SET status = "completed" WHERE id = ?'
+        self.conn.execute(query, (task_id,))
+        self.conn.commit()
 
     def _insert_one(self, table: str, columns, values: tuple):
         n = len(values)
