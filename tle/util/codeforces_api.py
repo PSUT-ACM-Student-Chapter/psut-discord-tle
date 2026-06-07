@@ -374,7 +374,7 @@ async def _query_api(path: str, data: Any=None):
         logger.info(f'Querying CF API at {url} with {data}')
         # Explicitly state encoding (though aiohttp accepts gzip by default)
         headers = {'Accept-Encoding': 'gzip'}
-        async with _session.post(url, data=data, headers=headers) as resp:
+        async with _session.get(url, data=data, headers=headers) as resp:
             try:
                 respjson = await resp.json()
             except aiohttp.ContentTypeError:
@@ -435,8 +435,8 @@ class contest:
             params['handles'] = ';'.join(handles)
         if room is not None:
             params['room'] = room
-        if show_unofficial is not None:
-            params['showUnofficial'] = _bool_to_str(show_unofficial)
+        # if show_unofficial is not None:
+            # params['showUnofficial'] = _bool_to_str(show_unofficial)
         try:
             resp = await _query_api('contest.standings', params)
         except TrueApiError as e:
