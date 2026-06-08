@@ -368,24 +368,32 @@ def cf_ratelimit(f):
 
 
 @cf_ratelimit
-async def _query_api(path: str, data: Any=None):
+async def _query_api(path: str, data: Any = None, method: str = 'POST'):
     url = API_BASE_URL + path
     try:
-        logger.info(f'Querying CF API at {url} with {data}')
-        # Explicitly state encoding (though aiohttp accepts gzip by default)
+        logger.info(f'Querying CF API at {url} using {method} with {data}')
         headers = {'Accept-Encoding': 'gzip'}
-        async with _session.post(url, data=data, headers=headers) as resp:
-            try:
+        
+        # Correctly handle parameters for GET vs POST
+        if method == 'GET':
+            async with _session.get(url, params=data, headers=headers) as resp:
                 respjson = await resp.json()
-            except aiohttp.ContentTypeError:
-                logger.warning(f'CF API did not respond with JSON, status {resp.status}.')
-                raise CodeforcesApiError
-            if resp.status == 200:
-                return respjson['result']
-            comment = f'HTTP Error {resp.status}, {respjson.get("comment")}'
+        else:
+            async with _session.post(url, data=data, headers=headers) as resp:
+                respjson = await resp.json()
+        
+        if resp.status == 200:
+            return respjson['result']
+        
+        comment = f'HTTP Error {resp.status}, {respjson.get("comment")}'
+    
+    except aiohttp.ContentTypeError:
+        logger.warning(f'CF API did not respond with JSON, status {resp.status}.')
+        raise CodeforcesApiError
     except aiohttp.ClientError as e:
         logger.error(f'Request to CF API encountered error: {e!r}')
         raise ClientError from e
+        
     logger.warning(f'Query to CF API failed: {comment}')
     if 'limit exceeded' in comment:
         raise CallLimitExceededError(comment)
@@ -435,10 +443,10 @@ class contest:
             params['handles'] = ';'.join(handles)
         if room is not None:
             params['room'] = room
-        if show_unofficial is not None:
-            params['showUnofficial'] = _bool_to_str(show_unofficial)
+        # if show_unofficial is not None:
+            # params['showUnofficial'] = _bool_to_str(show_unofficial)
         try:
-            resp = await _query_api('contest.standings', params)
+            resp = await _query_api('contest.standings', params, 'GET')
         except TrueApiError as e:
             if 'not found' in e.comment:
                 raise ContestNotFoundError(e.comment, contest_id)

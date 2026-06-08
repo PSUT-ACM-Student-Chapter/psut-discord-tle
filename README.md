@@ -22,6 +22,7 @@ The features of the bot are split into a number of cogs, each handling their own
 - **CacheControl** Commands related to data caching.
 
 ## Installation
+
 > If you want to run the bot inside a docker container follow these [instructions](/Docker.md)
 
 Clone the repository
@@ -57,7 +58,7 @@ python3.8 -m pip install poetry
 python3.8 -m poetry install
 ```
 
-On some systems, Poetry is not able to install TLE's dependencies correctly. If you are unable to run `poetry install` without errors after completing the steps below, see the note at the end of the *final steps* section.
+On some systems, Poetry is not able to install TLE's dependencies correctly. If you are unable to run `poetry install` without errors after completing the steps below, see the note at the end of the _final steps_ section.
 
 ---
 
@@ -70,6 +71,7 @@ apt-get install libcairo2-dev libgirepository1.0-dev libpango1.0-dev pkg-config 
 ```
 
 Additionally TLE uses pillow for graphics, which requires the following packages:
+python3 -m venv .venv
 
 ```bash
 apt-get install libjpeg-dev zlib1g-dev
