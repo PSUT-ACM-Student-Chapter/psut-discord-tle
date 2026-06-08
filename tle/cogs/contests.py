@@ -1193,21 +1193,25 @@ class Contests(commands.Cog):
             predicted.append(calculateDifficulty(ratings, solves))
 
         # Output results
-        style = table.Style("{:<}  {:>}  {:>}")
+        # 1. Use a single space separator "{:<} {:<}..." instead of double space to save width
+        style = table.Style("{:<} {:<} {:>} {:>}") 
         t = table.Table(style)
         t += table.Header(
-            "#", "Official", "Predicted (C)" if from_cache else "Predicted"
+            "#", "Name", "Official", "Predicted (C)" if from_cache else "Predicted"
         )
         t += table.Line()
         for i, index in enumerate(indicies):
-            t += table.Data(f"{index}", f"{officialRatings[i]}", f"{predicted[i]}")
+            # 2. Truncate long problem names to 18 characters so they don't blow up the column width
+            name_short = problemNames[i][:18] + ".." if len(problemNames[i]) > 18 else problemNames[i]
+            t += table.Data(f"{index}", f"{name_short}", f"{officialRatings[i]}", f"{predicted[i]}")
+            
         table_str = f"```\n{t}\n```"
         url = f"{cf.CONTEST_BASE_URL}{contest_id}"
         title = reqcontest[0].name
-        embed = discord_common.cf_color_embed(
-            description=table_str, title=title, url=url
-        )
-        await ctx.send(embed=embed)
+        
+        # 3. FIX THE WRAPPING: Send the title as an embed, but the table as plain text content
+        embed = discord_common.cf_color_embed(title=title, url=url)
+        await ctx.send(content=table_str, embed=embed)
 
     @discord_common.send_error_if(
         ContestCogError,
