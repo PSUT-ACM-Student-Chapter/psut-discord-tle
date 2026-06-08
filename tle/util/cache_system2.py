@@ -339,8 +339,7 @@ class ProblemsetCache:
 
     async def _fetch_for_contest(self, contest_id):
         try:
-            contest, problemset, _ = await cf.contest.standings(contest_id=contest_id, from_=1,
-                                                                count=1)
+            contest, problemset, _ = await cf.contest.standings(contest_id=contest_id)
             
             divisions = [div_tag for div_tag in _DIV_TAGS if contest.matches([div_tag])] 
 
