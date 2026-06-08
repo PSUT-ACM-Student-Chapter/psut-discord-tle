@@ -73,7 +73,7 @@ class Meta(commands.Cog):
     async def ping(self, ctx):
         """Replies to a ping."""
         start = time.perf_counter()
-        message = await ctx.send(':ping_pong: Pong!')
+        message = await ctx.send(f':ping_pong: Pong! {start}')
         end = time.perf_counter()
         
         rest_latency = int((end - start) * 1000)
