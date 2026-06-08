@@ -446,7 +446,7 @@ class contest:
         # if show_unofficial is not None:
             # params['showUnofficial'] = _bool_to_str(show_unofficial)
         try:
-            resp = await _query_api('contest.standings', params)
+            resp = await _query_api('contest.standings', params, 'GET')
         except TrueApiError as e:
             if 'not found' in e.comment:
                 raise ContestNotFoundError(e.comment, contest_id)
