@@ -5,6 +5,7 @@ import time
 import random
 import sqlite3
 import io
+import asyncio
 import aiohttp
 import discord
 from discord.ext import commands
@@ -293,13 +294,56 @@ class CP31(commands.Cog):
         """
         Shows the CP31 leaderboard.
         
-        Points are awarded based on the difficulty of the problem solved.
+        Points are awarded based on the difficulty of the problems solved on the CP31 sheets.
         Formula: Points = Rating / 100
         For example: An 800-rated problem gives 8 points, a 1500 gives 15 points, etc.
         """
+        wait_msg = None
+        
+        # Sync newly identified users from TLE global database before showing leaderboard
+        if HAS_CF_COMMON:
+            tle_users = cf_common.user_db.get_handles_for_guild("Global")
+            
+            # Fetch users we already know about in CP31
+            self.cursor.execute('SELECT discord_id FROM users')
+            existing_users = set(row[0] for row in self.cursor.fetchall())
+            
+            # Filter users missing from our CP31 database
+            missing_users = [(disc_id, handle) for disc_id, handle in tle_users if disc_id not in existing_users]
+            
+            if missing_users:
+                wait_msg = await ctx.send(f"⏳ Syncing historical data for {len(missing_users)} new user(s) to the CP31 Leaderboard. This might take a moment...")
+                
+                # Load all CP31 problems into a fast lookup map: (contest_id, index) -> rating
+                cp31_map = {}
+                all_problems = self._get_problems_by_rating(range(800, 3200, 100))
+                for url, rating in all_problems:
+                    c_id, idx = self._parse_cf_url(url)
+                    if c_id and idx:
+                        cp31_map[(c_id, idx)] = rating
+                
+                # Fetch Codeforces history for missing users to calculate their retroactive base score
+                for disc_id, handle in missing_users:
+                    solved = await self._get_solved_problems(handle)
+                    points = 0
+                    if solved:
+                        for c_id, idx in solved:
+                            if (c_id, idx) in cp31_map:
+                                points += cp31_map[(c_id, idx)] // 100
+                    
+                    self.cursor.execute('INSERT INTO users (discord_id, handle, points) VALUES (?, ?, ?)', (disc_id, handle, points))
+                    self.conn.commit()
+                    
+                    # Sleep briefly to avoid Codeforces API rate limiting
+                    await asyncio.sleep(0.5)
+
+        # Now fetch the freshly updated leaderboard from our DB
         self.cursor.execute('SELECT discord_id, handle, points FROM users WHERE points > 0 ORDER BY points DESC LIMIT ?', (limit,))
         users_data = self.cursor.fetchall()
         
+        if wait_msg:
+            await wait_msg.delete()
+            
         if not users_data:
             return await ctx.send("🏆 The leaderboard is currently empty! Use `;tle <rating>` to start earning points.")
             
@@ -316,6 +360,7 @@ class CP31(commands.Cog):
             if buf:
                 return await ctx.send(file=discord.File(buf, filename="leaderboard.png"))
                 
+        # Fallback to Text Embed if image fails
         embed = discord.Embed(title="🏆 CP31 Leaderboard", color=0xFFD700)
         desc = ""
         for i, (disc_id, handle, points) in enumerate(users_data, start=1):
