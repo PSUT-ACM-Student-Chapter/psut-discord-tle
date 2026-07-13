@@ -23,6 +23,7 @@ except ImportError:
 
 CP31_DIR = "cp31"
 DB_FILE = "cp31_tle.db"
+CACHE_TTL = 43200 # 12 hours
 
 # Matches both /contest/123/problem/A and /problemset/problem/123/A
 CF_URL_REGEX = re.compile(
@@ -38,6 +39,10 @@ class CP31(commands.Cog):
         self._setup_directories()
         self._setup_database()
         self.session = aiohttp.ClientSession()
+        
+        # Memory cache to avoid querying Codeforces excessively
+        # Format: { "handle": {"time": timestamp, "solved": set_of_problems} }
+        self.solved_cache = {}
 
     def _setup_directories(self):
         """Creates the cp31 directory and dummy files if they don't exist."""
@@ -107,12 +112,22 @@ class CP31(commands.Cog):
             return str(contest_id), str(index).upper()
         return None, None
 
-    async def _get_solved_problems(self, handle: str):
+    async def _get_solved_problems(self, handle: str, force_update: bool = False):
+        """Fetches solved problems from Codeforces API with an internal cache mechanism."""
+        current_time = time.time()
+        
+        # Check cache unless an update is forced
+        if not force_update and handle in self.solved_cache:
+            if current_time - self.solved_cache[handle]['time'] < CACHE_TTL:
+                return self.solved_cache[handle]['solved']
+
+        # Fetch from CF API
         url = f"https://codeforces.com/api/user.status?handle={handle}"
         async with self.session.get(url) as resp:
             if resp.status != 200: return None
             data = await resp.json()
             if data.get("status") != "OK": return None
+            
             solved = set()
             for submission in data.get("result", []):
                 if submission.get("verdict") == "OK":
@@ -120,6 +135,9 @@ class CP31(commands.Cog):
                     c_id = str(prob.get("contestId", ""))
                     idx = str(prob.get("index", "")).upper()
                     if c_id and idx: solved.add((c_id, idx))
+            
+            # Update cache
+            self.solved_cache[handle] = {'time': current_time, 'solved': solved}
             return solved
 
     def _get_problems_by_rating(self, ratings: list):
@@ -149,8 +167,12 @@ class CP31(commands.Cog):
             if not handle:
                 return await ctx.send("Usage: `;tle_handle <handle>`")
         
+        # Show progress indicator
+        wait_msg = await ctx.send(f"⏳ Fetching CP31 progress for `{handle}`, please wait...")
+        
         solved = await self._get_solved_problems(handle)
-        if solved is None: return await ctx.send(f"❌ Could not find Codeforces handle: `{handle}`")
+        if solved is None: 
+            return await wait_msg.edit(content=f"❌ Could not find Codeforces handle or API is down: `{handle}`")
         
         all_problems = self._get_problems_by_rating(range(800, 3200, 100))
         stats = {}
@@ -164,7 +186,9 @@ class CP31(commands.Cog):
         for r in sorted(stats.keys()):
             done, total = stats[r]
             if total > 0: embed.add_field(name=f"{r}", value=f"{done}/{total} ({int(done/total*100)}%)", inline=True)
-        await ctx.send(embed=embed)
+            
+        # Edit the waiting message with the final embed
+        await wait_msg.edit(content=None, embed=embed)
 
     @commands.group(name="tle", invoke_without_command=True)
     async def tle_challenge(self, ctx, rating: int = None):
@@ -182,43 +206,64 @@ class CP31(commands.Cog):
         else:
             return await ctx.send("❌ Cannot resolve handle because standard TLE dependencies are missing.")
 
+        # Database checks before making API calls
+        self.cursor.execute('SELECT problem_url FROM active_challenges WHERE discord_id = ?', (ctx.author.id,))
+        if self.cursor.fetchone(): 
+            return await ctx.send("❌ You already have an active challenge!")
+
         # Update local DB handle map so the leaderboard still knows this discord_id maps to this handle
         self.cursor.execute('INSERT OR IGNORE INTO users (discord_id, handle, points) VALUES (?, ?, 0)', (ctx.author.id, handle))
         self.cursor.execute('UPDATE users SET handle = ? WHERE discord_id = ?', (handle, ctx.author.id))
         self.conn.commit()
 
-        self.cursor.execute('SELECT problem_url FROM active_challenges WHERE discord_id = ?', (ctx.author.id,))
-        if self.cursor.fetchone(): return await ctx.send("❌ You already have an active challenge!")
+        # Show progress indicator
+        wait_msg = await ctx.send("⏳ Searching for a suitable unsolved problem...")
 
         all_problems = self._get_problems_by_rating([rating])
         solved_set = await self._get_solved_problems(handle)
+        
+        if solved_set is None:
+             return await wait_msg.edit(content=f"❌ Failed to reach Codeforces API for user `{handle}`.")
+
         unsolved = [p for p in all_problems if self._parse_cf_url(p[0]) not in solved_set]
 
-        if not unsolved: return await ctx.send("🏆 No unsolved problems found for this rating.")
+        if not unsolved: 
+            return await wait_msg.edit(content="🏆 No unsolved problems found for this rating.")
+            
         chosen_url, r = random.choice(unsolved)
         
         self.cursor.execute('INSERT INTO active_challenges VALUES (?, ?, ?, ?)', (ctx.author.id, chosen_url, r, int(time.time())))
         self.conn.commit()
-        await ctx.send(f"🎯 **New Challenge ({r}) for {handle}:** {chosen_url}")
+        
+        await wait_msg.edit(content=f"🎯 **New Challenge ({r}) for {handle}:** {chosen_url}")
 
     @tle_challenge.command(name="done")
     async def tle_done(self, ctx):
-        # Handle will exist here properly because the main command upserts it into the 'users' table
+        """Verifies if the current active challenge is solved."""
         self.cursor.execute('SELECT problem_url, rating, handle FROM active_challenges JOIN users USING(discord_id) WHERE discord_id = ?', (ctx.author.id,))
         row = self.cursor.fetchone()
-        if not row: return await ctx.send("No active challenge.")
+        if not row: 
+            return await ctx.send("❌ No active challenge.")
         
         url, rating, handle = row
         c_id, idx = self._parse_cf_url(url)
-        solved = await self._get_solved_problems(handle)
+        
+        wait_msg = await ctx.send(f"⏳ Verifying your submission for `{handle}` on Codeforces...")
+        
+        # force_update=True ensures they don't get punished by the cache if they literally just solved it
+        solved = await self._get_solved_problems(handle, force_update=True)
+        
+        if solved is None:
+            return await wait_msg.edit(content="❌ Failed to connect to Codeforces API. Try again later.")
         
         if (c_id, idx) in solved:
-            self.cursor.execute('UPDATE users SET points = points + ? WHERE discord_id = ?', (rating // 100, ctx.author.id))
+            points_gained = rating // 100
+            self.cursor.execute('UPDATE users SET points = points + ? WHERE discord_id = ?', (points_gained, ctx.author.id))
             self.cursor.execute('DELETE FROM active_challenges WHERE discord_id = ?', (ctx.author.id,))
             self.conn.commit()
-            await ctx.send("✅ Challenge completed! Points awarded.")
+            await wait_msg.edit(content=f"✅ Challenge completed! **+{points_gained} points** awarded.")
         else:
-            await ctx.send("❌ Problem not marked as solved on Codeforces yet.")
+            await wait_msg.edit(content="❌ Problem not marked as solved on Codeforces yet. Make sure your submission is Accepted!")
 
 async def setup(bot):
     await bot.add_cog(CP31(bot))
