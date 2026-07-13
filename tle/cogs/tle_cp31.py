@@ -1,27 +1,23 @@
 import os
 import re
+import json
 import time
 import random
 import sqlite3
 import io
+import html
 import asyncio
 import aiohttp
-import html
+
+import cairo
+import gi
+gi.require_version('Pango', '1.0')
+gi.require_version('PangoCairo', '1.0')
+from gi.repository import Pango, PangoCairo
+
 import discord
 from discord.ext import commands
 
-# Attempt to load Cairo & Pango for high-quality MGG-style renders
-try:
-    import cairo
-    import gi
-    gi.require_version('Pango', '1.0')
-    gi.require_version('PangoCairo', '1.0')
-    from gi.repository import Pango, PangoCairo
-    HAS_CAIRO = True
-except (ImportError, ValueError):
-    HAS_CAIRO = False
-
-# Attempt to load TLE common utils for global DB and handles
 try:
     from tle.util import codeforces_common as cf_common
     HAS_CF_COMMON = True
@@ -47,7 +43,7 @@ FONTS = [
 ]
 
 def rating_to_color(rating):
-    """Returns (r, g, b) pixel values corresponding to the user's Codeforces rating"""
+    """returns (r, g, b) pixels values corresponding to rating"""
     BLACK = (10, 10, 10)
     RED = (255, 20, 20)
     BLUE = (0, 0, 200)
@@ -71,6 +67,91 @@ def rating_to_color(rating):
     if rating < 2400:
         return ORANGE
     return RED
+
+def get_cp31_leaderboard_image(rankings):
+    """return io.BytesIO image buffer for rankings matching MGG visual style"""
+    SMOKE_WHITE = (250, 250, 250)
+    BLACK = (0, 0, 0)
+    DISCORD_GRAY = (.212, .244, .247)
+    ROW_COLORS = ((0.95, 0.95, 0.95), (0.9, 0.9, 0.9))
+
+    WIDTH = 900
+    BORDER_MARGIN = 20
+    COLUMN_MARGIN = 10
+    HEADER_SPACING = 1.25
+    WIDTH_RANK = 0.08*WIDTH
+    WIDTH_NAME = 0.38*WIDTH
+    LINE_HEIGHT = 40
+    HEIGHT = int((len(rankings) + HEADER_SPACING) * LINE_HEIGHT + 2*BORDER_MARGIN)
+    
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, WIDTH, HEIGHT)
+    context = cairo.Context(surface)
+    context.set_line_width(1)
+    context.set_source_rgb(*DISCORD_GRAY)
+    context.rectangle(0, 0, WIDTH, HEIGHT)
+    context.fill()
+    layout = PangoCairo.create_layout(context)
+    layout.set_font_description(Pango.font_description_from_string(','.join(FONTS) + ' 20'))
+    layout.set_ellipsize(Pango.EllipsizeMode.END)
+
+    def draw_bg(y, color_index):
+        nxty = y + LINE_HEIGHT
+        
+        # Main row background
+        context.move_to(BORDER_MARGIN, y)
+        context.line_to(WIDTH - BORDER_MARGIN, y)
+        context.line_to(WIDTH - BORDER_MARGIN, nxty)
+        context.line_to(BORDER_MARGIN, nxty)
+        context.set_source_rgb(*ROW_COLORS[color_index])
+        context.fill()
+
+        # Added slanted background for the rank number mimicking the screenshot
+        slant_width = 15
+        context.move_to(BORDER_MARGIN, y)
+        context.line_to(BORDER_MARGIN + WIDTH_RANK, y)
+        context.line_to(BORDER_MARGIN + WIDTH_RANK - slant_width, nxty)
+        context.line_to(BORDER_MARGIN, nxty)
+        # Slightly darker shade of the row background for the slant
+        context.set_source_rgb(*[ROW_COLORS[color_index][0] - 0.04]*3)
+        context.fill()
+
+    def draw_row(pos, username, handle, rating, color, y, bold=False):
+        context.set_source_rgb(*[x/255.0 for x in color])
+        context.move_to(BORDER_MARGIN, y)
+
+        def draw(text, width=-1):
+            text = html.escape(text)
+            if bold:
+                text = f'<b>{text}</b>'
+            layout.set_width(int((width - COLUMN_MARGIN)*1000))
+            layout.set_markup(text, -1)
+            PangoCairo.show_layout(context, layout)
+            context.rel_move_to(width, 0)
+
+        draw(pos, WIDTH_RANK)
+        draw(username, WIDTH_NAME)
+        draw(handle, WIDTH_NAME)
+        draw(rating)
+
+    y = BORDER_MARGIN
+    draw_row('#', 'Name', 'Handle', 'Points', SMOKE_WHITE, y, bold=True)
+    y += LINE_HEIGHT*HEADER_SPACING
+
+    for i, (pos, name, handle, rating, score) in enumerate(rankings):
+        color = rating_to_color(rating)
+        draw_bg(y, i%2)
+        draw_row(str(pos+1), f'{name}', f'{handle}', str(score), color, y)
+        
+        # Grandmaster+ initial rendering quirk (black letter overlay)
+        if rating and rating >= 3000:
+            draw_row('', name[0] if name else "", handle[0] if handle else "", '', BLACK, y)
+        y += LINE_HEIGHT
+
+    image_data = io.BytesIO()
+    surface.write_to_png(image_data)
+    image_data.seek(0)
+    return image_data
+
 
 class CP31(commands.Cog):
     """Commands for CP31 TLE challenges."""
@@ -134,105 +215,6 @@ class CP31(commands.Cog):
         self.conn.close()
         self.bot.loop.create_task(self.session.close())
 
-    def _generate_ranklist_image(self, ctx, users_data):
-        """Generates a Cairo/Pango image for the leaderboard, styled like mgg."""
-        if not HAS_CAIRO: return None
-        
-        # Prepare the dataset mapped with accurate handles and latest ratings
-        rankings = []
-        cf_users = {}
-        if HAS_CF_COMMON and ctx.guild:
-            res = cf_common.user_db.get_cf_users_for_guild(ctx.guild.id)
-            if res:
-                for uid, cf_user in res:
-                    cf_users[uid] = cf_user
-                    
-        for i, (disc_id, handle, points) in enumerate(users_data):
-            name = str(handle)
-            if ctx.guild:
-                member = ctx.guild.get_member(disc_id)
-                if member: name = member.display_name
-                    
-            rating = None
-            if disc_id in cf_users:
-                rating = cf_users[disc_id].rating
-                
-            rankings.append((i, name, handle, rating, points))
-
-        # Aesthetics mappings matching standard MGG code
-        SMOKE_WHITE = (250, 250, 250)
-        BLACK = (0, 0, 0)
-        DISCORD_GRAY = (.212, .244, .247)
-        ROW_COLORS = ((0.95, 0.95, 0.95), (0.9, 0.9, 0.9))
-
-        WIDTH = 900
-        BORDER_MARGIN = 20
-        COLUMN_MARGIN = 10
-        HEADER_SPACING = 1.25
-        WIDTH_RANK = 0.08 * WIDTH
-        WIDTH_NAME = 0.38 * WIDTH
-        LINE_HEIGHT = 40
-        HEIGHT = int((len(rankings) + HEADER_SPACING) * LINE_HEIGHT + 2 * BORDER_MARGIN)
-        
-        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, WIDTH, HEIGHT)
-        context = cairo.Context(surface)
-        context.set_line_width(1)
-        context.set_source_rgb(*DISCORD_GRAY)
-        context.rectangle(0, 0, WIDTH, HEIGHT)
-        context.fill()
-        
-        layout = PangoCairo.create_layout(context)
-        layout.set_font_description(Pango.font_description_from_string(','.join(FONTS) + ' 20'))
-        layout.set_ellipsize(Pango.EllipsizeMode.END)
-
-        def draw_bg(y, color_index):
-            nxty = y + LINE_HEIGHT
-            context.move_to(BORDER_MARGIN, y)
-            context.line_to(WIDTH, y)
-            context.line_to(WIDTH, nxty)
-            context.line_to(0, nxty)
-            context.set_source_rgb(*ROW_COLORS[color_index])
-            context.fill()
-
-        def draw_row(pos_text, username_text, handle_text, score_text, color, y, bold=False):
-            context.set_source_rgb(*[x/255.0 for x in color])
-            context.move_to(BORDER_MARGIN, y)
-
-            def draw(text, width=-1):
-                text = html.escape(str(text))
-                if bold:
-                    text = f'<b>{text}</b>'
-                layout.set_width(int((width - COLUMN_MARGIN) * 1000))
-                layout.set_markup(text, -1)
-                PangoCairo.show_layout(context, layout)
-                context.rel_move_to(width, 0)
-
-            draw(pos_text, WIDTH_RANK)
-            draw(username_text, WIDTH_NAME)
-            draw(handle_text, WIDTH_NAME)
-            draw(score_text)
-
-        y = BORDER_MARGIN
-        draw_row('#', 'Name', 'Handle', 'Points', SMOKE_WHITE, y, bold=True)
-        y += LINE_HEIGHT * HEADER_SPACING
-
-        for i, name, handle, rating, points in rankings:
-            color = rating_to_color(rating)
-            draw_bg(y, i % 2)
-            handle_rating_str = f'{handle} ({rating if rating else "N/A"})'
-            draw_row(str(i + 1), name, handle_rating_str, str(points), color, y)
-            
-            # Special grandmaster first-letter coloring effect
-            if rating and rating >= 3000:
-                draw_row('', name[0], handle[0], '', BLACK, y)
-                
-            y += LINE_HEIGHT
-
-        image_data = io.BytesIO()
-        surface.write_to_png(image_data)
-        image_data.seek(0)
-        return image_data
-
     def _parse_cf_url(self, url: str):
         match = CF_URL_REGEX.search(url)
         if match:
@@ -242,7 +224,7 @@ class CP31(commands.Cog):
         return None, None
 
     async def _get_solved_problems(self, handle: str, force_update: bool = False):
-        """Fetches solved problems from Codeforces API with a persistent SQLite cache mechanism."""
+        """Fetches solved problems from Codeforces API with persistent SQLite cache mechanism."""
         current_time = int(time.time())
         
         if not force_update:
@@ -288,6 +270,182 @@ class CP31(commands.Cog):
                         if line.strip(): problems.append((line.strip(), r))
         return problems
 
+    @commands.group(name="tle", invoke_without_command=True)
+    async def tle_challenge(self, ctx, rating: str = None):
+        """Request a problem. Usage: ;tle <rating> or ;tle <min>-<max> (e.g. 1000-1500)"""
+        if not rating: 
+            return await ctx.send("Usage: `;tle <rating>` or `;tle <min>-<max>` (e.g., `1000-1500`)")
+        
+        if HAS_CF_COMMON:
+            handle = cf_common.user_db.get_handle(ctx.author.id, "Global")
+            if not handle:
+                return await ctx.send("❌ Set your handle first via the bot's identify command.")
+        else:
+            return await ctx.send("❌ Cannot resolve handle because standard TLE dependencies are missing.")
+
+        # Database checks before making API calls
+        self.cursor.execute('SELECT problem_url FROM active_challenges WHERE discord_id = ?', (ctx.author.id,))
+        if self.cursor.fetchone(): 
+            return await ctx.send("❌ You already have an active challenge! Use `;tle done` to verify it.")
+
+        # Parse the rating input (Handles single ratings and ranges like 1000-1500)
+        target_ratings = []
+        if '-' in rating:
+            try:
+                min_r, max_r = map(int, rating.split('-'))
+                if min_r > max_r:
+                    min_r, max_r = max_r, min_r
+                # Ensure snap to boundaries (e.g. 100 increments)
+                min_r = max(800, (min_r // 100) * 100)
+                max_r = min(3500, (max_r // 100) * 100)
+                target_ratings = list(range(min_r, max_r + 100, 100))
+            except ValueError:
+                return await ctx.send("❌ Invalid range format. Use e.g. `1000-1500`.")
+        else:
+            try:
+                val = (int(rating) // 100) * 100
+                target_ratings = [val]
+            except ValueError:
+                return await ctx.send("❌ Invalid rating format. Use a number like `1200`.")
+        
+        target_ratings = [r for r in target_ratings if 800 <= r <= 3500]
+        if not target_ratings:
+            return await ctx.send("❌ Ratings must be between 800 and 3500.")
+
+        self.cursor.execute('INSERT OR IGNORE INTO users (discord_id, handle, points) VALUES (?, ?, 0)', (ctx.author.id, handle))
+        self.cursor.execute('UPDATE users SET handle = ? WHERE discord_id = ?', (handle, ctx.author.id))
+        self.conn.commit()
+
+        wait_msg = await ctx.send("⏳ Searching for a suitable unsolved problem...")
+
+        all_problems = self._get_problems_by_rating(target_ratings)
+        solved_set = await self._get_solved_problems(handle)
+        
+        if solved_set is None:
+             return await wait_msg.edit(content=f"❌ Failed to reach Codeforces API for user `{handle}`.")
+
+        unsolved = [p for p in all_problems if self._parse_cf_url(p[0]) not in solved_set]
+
+        if not unsolved: 
+            return await wait_msg.edit(content="🏆 No unsolved problems found for the requested rating range.")
+            
+        chosen_url, r = random.choice(unsolved)
+        
+        self.cursor.execute('INSERT INTO active_challenges VALUES (?, ?, ?, ?)', (ctx.author.id, chosen_url, r, int(time.time())))
+        self.conn.commit()
+        
+        await wait_msg.edit(content=f"🎯 **New Challenge ({r}) for {handle}:** {chosen_url}")
+
+    @tle_challenge.command(name="done")
+    async def tle_done(self, ctx):
+        """Verifies if the current active challenge is solved."""
+        self.cursor.execute('SELECT problem_url, rating, handle FROM active_challenges JOIN users USING(discord_id) WHERE discord_id = ?', (ctx.author.id,))
+        row = self.cursor.fetchone()
+        if not row: 
+            return await ctx.send("❌ No active challenge.")
+        
+        url, rating, handle = row
+        c_id, idx = self._parse_cf_url(url)
+        
+        wait_msg = await ctx.send(f"⏳ Verifying your submission for `{handle}` on Codeforces...")
+        
+        solved = await self._get_solved_problems(handle, force_update=True)
+        
+        if solved is None:
+            return await wait_msg.edit(content="❌ Failed to connect to Codeforces API. Try again later.")
+        
+        if (c_id, idx) in solved:
+            points_gained = rating // 100
+            self.cursor.execute('UPDATE users SET points = points + ? WHERE discord_id = ?', (points_gained, ctx.author.id))
+            self.cursor.execute('DELETE FROM active_challenges WHERE discord_id = ?', (ctx.author.id,))
+            self.conn.commit()
+            await wait_msg.edit(content=f"✅ Challenge completed! **+{points_gained} points** awarded.")
+        else:
+            await wait_msg.edit(content="❌ Problem not marked as solved on Codeforces yet. Make sure your submission is Accepted!")
+
+
+    @commands.command(name="tle_leaderboard", aliases=["tle_lb"])
+    async def tle_leaderboard(self, ctx, limit: int = 15):
+        """Shows the CP31 leaderboard formatted using PangoCairo."""
+        wait_msg = None
+        handle_to_rating = {}
+        
+        if HAS_CF_COMMON:
+            # Sync new users and grab rating data to colorize the PangoCairo Leaderboard
+            tle_users = cf_common.user_db.get_cf_users_for_guild(ctx.guild.id)
+            if tle_users:
+                for uid, cf_user in tle_users:
+                    handle_to_rating[cf_user.handle.lower()] = cf_user.rating
+            
+            # Fetch globally linked users
+            global_users = cf_common.user_db.get_handles_for_guild("Global")
+            
+            self.cursor.execute('SELECT discord_id FROM users')
+            existing_users = set(row[0] for row in self.cursor.fetchall())
+            
+            missing_users = [(disc_id, handle) for disc_id, handle in global_users if disc_id not in existing_users]
+            
+            if missing_users:
+                wait_msg = await ctx.send(f"⏳ Syncing historical data for {len(missing_users)} new user(s)...")
+                
+                cp31_map = {}
+                all_problems = self._get_problems_by_rating(range(800, 3200, 100))
+                for url, rating in all_problems:
+                    c_id, idx = self._parse_cf_url(url)
+                    if c_id and idx:
+                        cp31_map[(c_id, idx)] = rating
+                
+                for disc_id, handle in missing_users:
+                    solved = await self._get_solved_problems(handle)
+                    points = 0
+                    if solved:
+                        for c_id, idx in solved:
+                            if (c_id, idx) in cp31_map:
+                                points += cp31_map[(c_id, idx)] // 100
+                    
+                    self.cursor.execute('INSERT INTO users (discord_id, handle, points) VALUES (?, ?, ?)', (disc_id, handle, points))
+                    self.conn.commit()
+                    await asyncio.sleep(0.5)
+
+        self.cursor.execute('SELECT discord_id, handle, points FROM users WHERE points > 0 ORDER BY points DESC LIMIT ?', (limit,))
+        users_data = self.cursor.fetchall()
+        
+        if wait_msg:
+            await wait_msg.delete()
+            
+        if not users_data:
+            return await ctx.send("🏆 The leaderboard is currently empty! Use `;tle <rating>` to start earning points.")
+            
+        # Build rankings structure for get_cp31_leaderboard_image
+        # Structure: (pos, name, handle, rating, score)
+        rankings = []
+        for i, (disc_id, handle, points) in enumerate(users_data):
+            member = ctx.guild.get_member(disc_id)
+            name = member.display_name if member else handle
+            
+            # Look up rating to apply Codeforces color mapping, or leave None to render black
+            rating = handle_to_rating.get(handle.lower(), None)
+            
+            # Incorporate Discord Handle with CF Handle similar to mgg layout
+            display_handle = f"{handle} ({rating if rating else 'N/A'})"
+            
+            rankings.append((i, name, display_handle, rating, points))
+            
+        try:
+            buf = get_cp31_leaderboard_image(rankings)
+            if buf:
+                return await ctx.send(file=discord.File(buf, filename="cp31_leaderboard.png"))
+        except Exception as e:
+            # Fallback to Text Embed if Cairo isn't properly installed or fails
+            embed = discord.Embed(title="🏆 CP31 Leaderboard (Text Fallback)", color=0xFFD700)
+            desc = ""
+            for i, (disc_id, handle, points) in enumerate(users_data, start=1):
+                medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"`{i}.`"
+                desc += f"{medal} **{handle}**: {points} pts\n"
+            embed.description = desc
+            await ctx.send(embed=embed)
+
+
     @commands.command(name="tle_handle")
     async def tle_handle(self, ctx, *args):
         """View CP31 progress. Usage: ;tle_handle [handle or @user]"""
@@ -329,142 +487,6 @@ class CP31(commands.Cog):
             
         await wait_msg.edit(content=None, embed=embed)
 
-    @commands.group(name="tle", invoke_without_command=True)
-    async def tle_challenge(self, ctx, rating: int = None):
-        """Request a problem. Usage: ;tle <rating>"""
-        if not rating: return await ctx.send("Usage: `;tle <rating>`")
-        
-        if HAS_CF_COMMON:
-            handle = cf_common.user_db.get_handle(ctx.author.id, "Global")
-            if not handle:
-                return await ctx.send("❌ Set your handle first via the bot's identify command.")
-        else:
-            return await ctx.send("❌ Cannot resolve handle because standard TLE dependencies are missing.")
-
-        self.cursor.execute('SELECT problem_url FROM active_challenges WHERE discord_id = ?', (ctx.author.id,))
-        if self.cursor.fetchone(): 
-            return await ctx.send("❌ You already have an active challenge!")
-
-        self.cursor.execute('INSERT OR IGNORE INTO users (discord_id, handle, points) VALUES (?, ?, 0)', (ctx.author.id, handle))
-        self.cursor.execute('UPDATE users SET handle = ? WHERE discord_id = ?', (handle, ctx.author.id))
-        self.conn.commit()
-
-        wait_msg = await ctx.send("⏳ Searching for a suitable unsolved problem...")
-
-        all_problems = self._get_problems_by_rating([rating])
-        solved_set = await self._get_solved_problems(handle)
-        
-        if solved_set is None:
-             return await wait_msg.edit(content=f"❌ Failed to reach Codeforces API for user `{handle}`.")
-
-        unsolved = [p for p in all_problems if self._parse_cf_url(p[0]) not in solved_set]
-
-        if not unsolved: 
-            return await wait_msg.edit(content="🏆 No unsolved problems found for this rating.")
-            
-        chosen_url, r = random.choice(unsolved)
-        
-        self.cursor.execute('INSERT INTO active_challenges VALUES (?, ?, ?, ?)', (ctx.author.id, chosen_url, r, int(time.time())))
-        self.conn.commit()
-        
-        await wait_msg.edit(content=f"🎯 **New Challenge ({r}) for {handle}:** {chosen_url}")
-
-    @tle_challenge.command(name="done")
-    async def tle_done(self, ctx):
-        """Verifies if the current active challenge is solved."""
-        self.cursor.execute('SELECT problem_url, rating, handle FROM active_challenges JOIN users USING(discord_id) WHERE discord_id = ?', (ctx.author.id,))
-        row = self.cursor.fetchone()
-        if not row: 
-            return await ctx.send("❌ No active challenge.")
-        
-        url, rating, handle = row
-        c_id, idx = self._parse_cf_url(url)
-        
-        wait_msg = await ctx.send(f"⏳ Verifying your submission for `{handle}` on Codeforces...")
-        
-        solved = await self._get_solved_problems(handle, force_update=True)
-        
-        if solved is None:
-            return await wait_msg.edit(content="❌ Failed to connect to Codeforces API. Try again later.")
-        
-        if (c_id, idx) in solved:
-            points_gained = rating // 100
-            self.cursor.execute('UPDATE users SET points = points + ? WHERE discord_id = ?', (points_gained, ctx.author.id))
-            self.cursor.execute('DELETE FROM active_challenges WHERE discord_id = ?', (ctx.author.id,))
-            self.conn.commit()
-            await wait_msg.edit(content=f"✅ Challenge completed! **+{points_gained} points** awarded.")
-        else:
-            await wait_msg.edit(content="❌ Problem not marked as solved on Codeforces yet. Make sure your submission is Accepted!")
-
-    @commands.command(name="tle_leaderboard", aliases=["tle_lb"])
-    async def tle_leaderboard(self, ctx, limit: int = 15):
-        """
-        Shows the CP31 leaderboard visually.
-        """
-        wait_msg = None
-        
-        if HAS_CF_COMMON:
-            tle_users = cf_common.user_db.get_handles_for_guild("Global")
-            
-            self.cursor.execute('SELECT discord_id FROM users')
-            existing_users = set(row[0] for row in self.cursor.fetchall())
-            
-            missing_users = [(disc_id, handle) for disc_id, handle in tle_users if disc_id not in existing_users]
-            
-            if missing_users:
-                wait_msg = await ctx.send(f"⏳ Syncing historical data for {len(missing_users)} new user(s) to the CP31 Leaderboard. This might take a moment...")
-                
-                cp31_map = {}
-                all_problems = self._get_problems_by_rating(range(800, 3200, 100))
-                for url, rating in all_problems:
-                    c_id, idx = self._parse_cf_url(url)
-                    if c_id and idx:
-                        cp31_map[(c_id, idx)] = rating
-                
-                for disc_id, handle in missing_users:
-                    solved = await self._get_solved_problems(handle)
-                    points = 0
-                    if solved:
-                        for c_id, idx in solved:
-                            if (c_id, idx) in cp31_map:
-                                points += cp31_map[(c_id, idx)] // 100
-                    
-                    self.cursor.execute('INSERT INTO users (discord_id, handle, points) VALUES (?, ?, ?)', (disc_id, handle, points))
-                    self.conn.commit()
-                    await asyncio.sleep(0.5)
-
-        self.cursor.execute('SELECT discord_id, handle, points FROM users WHERE points > 0 ORDER BY points DESC LIMIT ?', (limit,))
-        users_data = self.cursor.fetchall()
-        
-        if wait_msg:
-            await wait_msg.delete()
-            
-        if not users_data:
-            return await ctx.send("🏆 The leaderboard is currently empty! Use `;tle <rating>` to start earning points.")
-            
-        # Dispatch to MGG-style Cairo image generation if dependencies are available
-        if HAS_CAIRO:
-            buf = self._generate_ranklist_image(ctx, users_data)
-            if buf:
-                return await ctx.send(file=discord.File(buf, filename="cp31_leaderboard.png"))
-                
-        # Fallback to Text Embed if image/Cairo fails or is missing
-        current_handle = None
-        if HAS_CF_COMMON:
-            current_handle = cf_common.user_db.get_handle(ctx.author.id, "Global")
-        else:
-            self.cursor.execute('SELECT handle FROM users WHERE discord_id = ?', (ctx.author.id,))
-            row = self.cursor.fetchone()
-            if row: current_handle = row[0]
-            
-        embed = discord.Embed(title="🏆 CP31 Leaderboard", color=0xFFD700)
-        desc = ""
-        for i, (disc_id, handle, points) in enumerate(users_data, start=1):
-            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"`{i}.`"
-            prefix = "**" if handle == current_handle else ""
-            desc += f"{medal} {prefix}{handle}{prefix}: {points} pts\n"
-        embed.description = desc
-        await ctx.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(CP31(bot))
