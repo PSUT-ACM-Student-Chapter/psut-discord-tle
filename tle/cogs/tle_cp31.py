@@ -9,8 +9,9 @@ import aiohttp
 import discord
 from discord.ext import commands
 
+# Corrected imports for standard TLE bot and its forks
 try:
-    from utils import cf_common
+    from tle.util import codeforces_common as cf_common
     HAS_CF_COMMON = True
 except ImportError:
     HAS_CF_COMMON = False
@@ -39,10 +40,6 @@ class CP31(commands.Cog):
         self._setup_directories()
         self._setup_database()
         self.session = aiohttp.ClientSession()
-        
-        # Memory cache to avoid querying Codeforces excessively
-        # Format: { "handle": {"time": timestamp, "solved": set_of_problems} }
-        self.solved_cache = {}
 
     def _setup_directories(self):
         """Creates the cp31 directory and dummy files if they don't exist."""
@@ -73,6 +70,23 @@ class CP31(commands.Cog):
                 issue_time INTEGER NOT NULL
             )
         ''')
+
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS solved_problems (
+                handle TEXT NOT NULL,
+                contest_id TEXT NOT NULL,
+                index_id TEXT NOT NULL,
+                PRIMARY KEY (handle, contest_id, index_id)
+            )
+        ''')
+
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_cache (
+                handle TEXT PRIMARY KEY,
+                last_fetch INTEGER DEFAULT 0
+            )
+        ''')
+        
         self.conn.commit()
 
     def cog_unload(self):
@@ -113,18 +127,23 @@ class CP31(commands.Cog):
         return None, None
 
     async def _get_solved_problems(self, handle: str, force_update: bool = False):
-        """Fetches solved problems from Codeforces API with an internal cache mechanism."""
-        current_time = time.time()
+        """Fetches solved problems from Codeforces API with a persistent SQLite cache mechanism."""
+        current_time = int(time.time())
         
-        # Check cache unless an update is forced
-        if not force_update and handle in self.solved_cache:
-            if current_time - self.solved_cache[handle]['time'] < CACHE_TTL:
-                return self.solved_cache[handle]['solved']
+        if not force_update:
+            self.cursor.execute('SELECT last_fetch FROM user_cache WHERE handle = ?', (handle,))
+            row = self.cursor.fetchone()
+            if row and (current_time - row[0]) < CACHE_TTL:
+                self.cursor.execute('SELECT contest_id, index_id FROM solved_problems WHERE handle = ?', (handle,))
+                return set((r[0], r[1]) for r in self.cursor.fetchall())
 
-        # Fetch from CF API
         url = f"https://codeforces.com/api/user.status?handle={handle}"
         async with self.session.get(url) as resp:
-            if resp.status != 200: return None
+            if resp.status != 200: 
+                self.cursor.execute('SELECT contest_id, index_id FROM solved_problems WHERE handle = ?', (handle,))
+                cached = self.cursor.fetchall()
+                return set((r[0], r[1]) for r in cached) if cached else None
+                
             data = await resp.json()
             if data.get("status") != "OK": return None
             
@@ -136,8 +155,12 @@ class CP31(commands.Cog):
                     idx = str(prob.get("index", "")).upper()
                     if c_id and idx: solved.add((c_id, idx))
             
-            # Update cache
-            self.solved_cache[handle] = {'time': current_time, 'solved': solved}
+            self.cursor.execute('INSERT OR REPLACE INTO user_cache (handle, last_fetch) VALUES (?, ?)', (handle, current_time))
+            self.cursor.executemany(
+                'INSERT OR IGNORE INTO solved_problems (handle, contest_id, index_id) VALUES (?, ?, ?)',
+                [(handle, c, i) for c, i in solved]
+            )
+            self.conn.commit()
             return solved
 
     def _get_problems_by_rating(self, ratings: list):
@@ -155,7 +178,7 @@ class CP31(commands.Cog):
         """View CP31 progress. Usage: ;tle_handle [handle or @user]"""
         if HAS_CF_COMMON:
             try:
-                # cf_common dynamically resolves @mentions or straight handle strings
+                # cf_common dynamically resolves @mentions, straight handle strings, or falls back to author
                 handles = await cf_common.resolve_handles(ctx, self.converter, args)
                 handle = handles[0]
             except Exception as e:
@@ -197,7 +220,7 @@ class CP31(commands.Cog):
         
         if HAS_CF_COMMON:
             try:
-                # Passing an empty tuple to resolve_handles tells TLE to fetch the author's saved handle
+                # Passing an empty tuple tells TLE to fetch the author's saved handle
                 handles = await cf_common.resolve_handles(ctx, self.converter, tuple())
                 handle = handles[0]
             except Exception as e:
