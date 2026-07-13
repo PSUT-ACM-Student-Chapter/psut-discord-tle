@@ -373,10 +373,15 @@ class CP31(commands.Cog):
             await ctx.send(embed=embed)
 
 
-def setup(bot):
+async def setup(bot):
     """Function to load the cog automatically by discord.ext.commands"""
-    bot.add_cog(CP31(bot))
+    await bot.add_cog(CP31(bot))
 
+# ==============================================================================
+# The following block is optional but allows you to run this specific file 
+# directly to test it without injecting it into the main bot immediately.
+# Replace 'YOUR_DISCORD_BOT_TOKEN' if you want to run it standalone.
+# ==============================================================================
 if __name__ == "__main__":
     bot = commands.Bot(command_prefix=";", intents=discord.Intents.all())
     
