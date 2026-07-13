@@ -1,27 +1,32 @@
 import os
 import re
-import json
 import time
 import random
 import sqlite3
 import io
 import asyncio
 import aiohttp
+import html
 import discord
 from discord.ext import commands
 
-# Corrected imports for standard TLE bot and its forks
+# Attempt to load Cairo & Pango for high-quality MGG-style renders
+try:
+    import cairo
+    import gi
+    gi.require_version('Pango', '1.0')
+    gi.require_version('PangoCairo', '1.0')
+    from gi.repository import Pango, PangoCairo
+    HAS_CAIRO = True
+except (ImportError, ValueError):
+    HAS_CAIRO = False
+
+# Attempt to load TLE common utils for global DB and handles
 try:
     from tle.util import codeforces_common as cf_common
     HAS_CF_COMMON = True
 except ImportError:
     HAS_CF_COMMON = False
-
-try:
-    from PIL import Image, ImageDraw, ImageFont
-    HAS_PIL = True
-except ImportError:
-    HAS_PIL = False
 
 CP31_DIR = "cp31"
 DB_FILE = "cp31_tle.db"
@@ -31,6 +36,41 @@ CACHE_TTL = 43200 # 12 hours
 CF_URL_REGEX = re.compile(
     r'codeforces\.com/(?:contest/(\d+)/problem/([A-Za-z0-9]+)|problemset/problem/(\d+)/([A-Za-z0-9]+))'
 )
+
+FONTS = [
+    'Noto Sans',
+    'Noto Sans CJK JP',
+    'Noto Sans CJK SC',
+    'Noto Sans CJK TC',
+    'Noto Sans CJK HK',
+    'Noto Sans CJK KR',
+]
+
+def rating_to_color(rating):
+    """Returns (r, g, b) pixel values corresponding to the user's Codeforces rating"""
+    BLACK = (10, 10, 10)
+    RED = (255, 20, 20)
+    BLUE = (0, 0, 200)
+    GREEN = (0, 140, 0)
+    ORANGE = (250, 140, 30)
+    PURPLE = (160, 0, 120)
+    CYAN = (0, 165, 170)
+    GREY = (70, 70, 70)
+    if rating is None or rating == 'N/A':
+        return BLACK
+    if rating < 1200:
+        return GREY
+    if rating < 1400:
+        return GREEN
+    if rating < 1600:
+        return CYAN
+    if rating < 1900:
+        return BLUE
+    if rating < 2100:
+        return PURPLE
+    if rating < 2400:
+        return ORANGE
+    return RED
 
 class CP31(commands.Cog):
     """Commands for CP31 TLE challenges."""
@@ -54,7 +94,6 @@ class CP31(commands.Cog):
         self.conn = sqlite3.connect(DB_FILE)
         self.cursor = self.conn.cursor()
         
-        # We keep the users table to track leaderboard points and locally cache their current handle
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 discord_id INTEGER PRIMARY KEY,
@@ -95,29 +134,104 @@ class CP31(commands.Cog):
         self.conn.close()
         self.bot.loop.create_task(self.session.close())
 
-    def _generate_ranklist_image(self, users_data, current_handle):
-        """Generates a PIL image for the leaderboard."""
-        if not HAS_PIL: return None
-        row_height, header_height, width = 35, 40, 650
-        height = header_height + (len(users_data) * row_height)
-        img = Image.new('RGB', (width, height), color='#FFFFFF')
-        draw = ImageDraw.Draw(img)
-        font = ImageFont.load_default()
+    def _generate_ranklist_image(self, ctx, users_data):
+        """Generates a Cairo/Pango image for the leaderboard, styled like mgg."""
+        if not HAS_CAIRO: return None
         
-        draw.rectangle([0, 0, width, header_height], fill='#36393F')
-        y = header_height
-        for i, (disc_id, handle, points) in enumerate(users_data, start=1):
-            bg_color = '#FFFFFF' if i % 2 != 0 else '#F2F2F2'
-            draw.rectangle([0, y, width, y + row_height], fill=bg_color)
-            text_color = '#2ECC71' if handle == current_handle else '#333333'
-            draw.text((20, y + 8), str(i), fill=text_color, font=font)
-            draw.text((80, y + 8), handle[:22], fill=text_color, font=font)
-            draw.text((550, y + 8), str(points), fill=text_color, font=font)
-            y += row_height
-        buf = io.BytesIO()
-        img.save(buf, format='PNG')
-        buf.seek(0)
-        return buf
+        # Prepare the dataset mapped with accurate handles and latest ratings
+        rankings = []
+        cf_users = {}
+        if HAS_CF_COMMON and ctx.guild:
+            res = cf_common.user_db.get_cf_users_for_guild(ctx.guild.id)
+            if res:
+                for uid, cf_user in res:
+                    cf_users[uid] = cf_user
+                    
+        for i, (disc_id, handle, points) in enumerate(users_data):
+            name = str(handle)
+            if ctx.guild:
+                member = ctx.guild.get_member(disc_id)
+                if member: name = member.display_name
+                    
+            rating = None
+            if disc_id in cf_users:
+                rating = cf_users[disc_id].rating
+                
+            rankings.append((i, name, handle, rating, points))
+
+        # Aesthetics mappings matching standard MGG code
+        SMOKE_WHITE = (250, 250, 250)
+        BLACK = (0, 0, 0)
+        DISCORD_GRAY = (.212, .244, .247)
+        ROW_COLORS = ((0.95, 0.95, 0.95), (0.9, 0.9, 0.9))
+
+        WIDTH = 900
+        BORDER_MARGIN = 20
+        COLUMN_MARGIN = 10
+        HEADER_SPACING = 1.25
+        WIDTH_RANK = 0.08 * WIDTH
+        WIDTH_NAME = 0.38 * WIDTH
+        LINE_HEIGHT = 40
+        HEIGHT = int((len(rankings) + HEADER_SPACING) * LINE_HEIGHT + 2 * BORDER_MARGIN)
+        
+        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, WIDTH, HEIGHT)
+        context = cairo.Context(surface)
+        context.set_line_width(1)
+        context.set_source_rgb(*DISCORD_GRAY)
+        context.rectangle(0, 0, WIDTH, HEIGHT)
+        context.fill()
+        
+        layout = PangoCairo.create_layout(context)
+        layout.set_font_description(Pango.font_description_from_string(','.join(FONTS) + ' 20'))
+        layout.set_ellipsize(Pango.EllipsizeMode.END)
+
+        def draw_bg(y, color_index):
+            nxty = y + LINE_HEIGHT
+            context.move_to(BORDER_MARGIN, y)
+            context.line_to(WIDTH, y)
+            context.line_to(WIDTH, nxty)
+            context.line_to(0, nxty)
+            context.set_source_rgb(*ROW_COLORS[color_index])
+            context.fill()
+
+        def draw_row(pos_text, username_text, handle_text, score_text, color, y, bold=False):
+            context.set_source_rgb(*[x/255.0 for x in color])
+            context.move_to(BORDER_MARGIN, y)
+
+            def draw(text, width=-1):
+                text = html.escape(str(text))
+                if bold:
+                    text = f'<b>{text}</b>'
+                layout.set_width(int((width - COLUMN_MARGIN) * 1000))
+                layout.set_markup(text, -1)
+                PangoCairo.show_layout(context, layout)
+                context.rel_move_to(width, 0)
+
+            draw(pos_text, WIDTH_RANK)
+            draw(username_text, WIDTH_NAME)
+            draw(handle_text, WIDTH_NAME)
+            draw(score_text)
+
+        y = BORDER_MARGIN
+        draw_row('#', 'Name', 'Handle', 'Points', SMOKE_WHITE, y, bold=True)
+        y += LINE_HEIGHT * HEADER_SPACING
+
+        for i, name, handle, rating, points in rankings:
+            color = rating_to_color(rating)
+            draw_bg(y, i % 2)
+            handle_rating_str = f'{handle} ({rating if rating else "N/A"})'
+            draw_row(str(i + 1), name, handle_rating_str, str(points), color, y)
+            
+            # Special grandmaster first-letter coloring effect
+            if rating and rating >= 3000:
+                draw_row('', name[0], handle[0], '', BLACK, y)
+                
+            y += LINE_HEIGHT
+
+        image_data = io.BytesIO()
+        surface.write_to_png(image_data)
+        image_data.seek(0)
+        return image_data
 
     def _parse_cf_url(self, url: str):
         match = CF_URL_REGEX.search(url)
@@ -180,19 +294,16 @@ class CP31(commands.Cog):
         if HAS_CF_COMMON:
             try:
                 if not args:
-                    # If no arguments provided, directly fetch the author's handle from TLE's db
                     handle = cf_common.user_db.get_handle(ctx.author.id, "Global")
                     if not handle:
                         return await ctx.send("❌ Could not resolve handle. Have you set it using the bot's identify command?")
                 else:
-                    # Dynamically resolve @mentions or straight handle strings
                     handles = await cf_common.resolve_handles(ctx, self.converter, args)
                     handle = handles[0]
             except Exception as e:
                 msg = str(e) or "Could not resolve handle. Have you set it using the bot's identify command?"
                 return await ctx.send(f"❌ {msg}")
         else:
-            # Fallback if the bot is missing TLE's utils
             handle = args[0] if args else None
             if not handle:
                 return await ctx.send("Usage: `;tle_handle <handle>`")
@@ -224,19 +335,16 @@ class CP31(commands.Cog):
         if not rating: return await ctx.send("Usage: `;tle <rating>`")
         
         if HAS_CF_COMMON:
-            # Fetch handle directly from DB instead of using resolve_handles to avoid min/max arguments error
             handle = cf_common.user_db.get_handle(ctx.author.id, "Global")
             if not handle:
                 return await ctx.send("❌ Set your handle first via the bot's identify command.")
         else:
             return await ctx.send("❌ Cannot resolve handle because standard TLE dependencies are missing.")
 
-        # Database checks before making API calls
         self.cursor.execute('SELECT problem_url FROM active_challenges WHERE discord_id = ?', (ctx.author.id,))
         if self.cursor.fetchone(): 
             return await ctx.send("❌ You already have an active challenge!")
 
-        # Update local DB handle map so the leaderboard still knows this discord_id maps to this handle
         self.cursor.execute('INSERT OR IGNORE INTO users (discord_id, handle, points) VALUES (?, ?, 0)', (ctx.author.id, handle))
         self.cursor.execute('UPDATE users SET handle = ? WHERE discord_id = ?', (handle, ctx.author.id))
         self.conn.commit()
@@ -274,7 +382,6 @@ class CP31(commands.Cog):
         
         wait_msg = await ctx.send(f"⏳ Verifying your submission for `{handle}` on Codeforces...")
         
-        # force_update=True ensures they don't get punished by the cache if they literally just solved it
         solved = await self._get_solved_problems(handle, force_update=True)
         
         if solved is None:
@@ -292,29 +399,21 @@ class CP31(commands.Cog):
     @commands.command(name="tle_leaderboard", aliases=["tle_lb"])
     async def tle_leaderboard(self, ctx, limit: int = 15):
         """
-        Shows the CP31 leaderboard.
-        
-        Points are awarded based on the difficulty of the problems solved on the CP31 sheets.
-        Formula: Points = Rating / 100
-        For example: An 800-rated problem gives 8 points, a 1500 gives 15 points, etc.
+        Shows the CP31 leaderboard visually.
         """
         wait_msg = None
         
-        # Sync newly identified users from TLE global database before showing leaderboard
         if HAS_CF_COMMON:
             tle_users = cf_common.user_db.get_handles_for_guild("Global")
             
-            # Fetch users we already know about in CP31
             self.cursor.execute('SELECT discord_id FROM users')
             existing_users = set(row[0] for row in self.cursor.fetchall())
             
-            # Filter users missing from our CP31 database
             missing_users = [(disc_id, handle) for disc_id, handle in tle_users if disc_id not in existing_users]
             
             if missing_users:
                 wait_msg = await ctx.send(f"⏳ Syncing historical data for {len(missing_users)} new user(s) to the CP31 Leaderboard. This might take a moment...")
                 
-                # Load all CP31 problems into a fast lookup map: (contest_id, index) -> rating
                 cp31_map = {}
                 all_problems = self._get_problems_by_rating(range(800, 3200, 100))
                 for url, rating in all_problems:
@@ -322,7 +421,6 @@ class CP31(commands.Cog):
                     if c_id and idx:
                         cp31_map[(c_id, idx)] = rating
                 
-                # Fetch Codeforces history for missing users to calculate their retroactive base score
                 for disc_id, handle in missing_users:
                     solved = await self._get_solved_problems(handle)
                     points = 0
@@ -333,11 +431,8 @@ class CP31(commands.Cog):
                     
                     self.cursor.execute('INSERT INTO users (discord_id, handle, points) VALUES (?, ?, ?)', (disc_id, handle, points))
                     self.conn.commit()
-                    
-                    # Sleep briefly to avoid Codeforces API rate limiting
                     await asyncio.sleep(0.5)
 
-        # Now fetch the freshly updated leaderboard from our DB
         self.cursor.execute('SELECT discord_id, handle, points FROM users WHERE points > 0 ORDER BY points DESC LIMIT ?', (limit,))
         users_data = self.cursor.fetchall()
         
@@ -347,6 +442,13 @@ class CP31(commands.Cog):
         if not users_data:
             return await ctx.send("🏆 The leaderboard is currently empty! Use `;tle <rating>` to start earning points.")
             
+        # Dispatch to MGG-style Cairo image generation if dependencies are available
+        if HAS_CAIRO:
+            buf = self._generate_ranklist_image(ctx, users_data)
+            if buf:
+                return await ctx.send(file=discord.File(buf, filename="cp31_leaderboard.png"))
+                
+        # Fallback to Text Embed if image/Cairo fails or is missing
         current_handle = None
         if HAS_CF_COMMON:
             current_handle = cf_common.user_db.get_handle(ctx.author.id, "Global")
@@ -355,12 +457,6 @@ class CP31(commands.Cog):
             row = self.cursor.fetchone()
             if row: current_handle = row[0]
             
-        if HAS_PIL:
-            buf = self._generate_ranklist_image(users_data, current_handle)
-            if buf:
-                return await ctx.send(file=discord.File(buf, filename="leaderboard.png"))
-                
-        # Fallback to Text Embed if image fails
         embed = discord.Embed(title="🏆 CP31 Leaderboard", color=0xFFD700)
         desc = ""
         for i, (disc_id, handle, points) in enumerate(users_data, start=1):
