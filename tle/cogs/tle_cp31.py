@@ -178,9 +178,15 @@ class CP31(commands.Cog):
         """View CP31 progress. Usage: ;tle_handle [handle or @user]"""
         if HAS_CF_COMMON:
             try:
-                # cf_common dynamically resolves @mentions, straight handle strings, or falls back to author
-                handles = await cf_common.resolve_handles(ctx, self.converter, args)
-                handle = handles[0]
+                if not args:
+                    # If no arguments provided, directly fetch the author's handle from TLE's db
+                    handle = cf_common.user_db.get_handle(ctx.author.id, "Global")
+                    if not handle:
+                        return await ctx.send("❌ Could not resolve handle. Have you set it using the bot's identify command?")
+                else:
+                    # Dynamically resolve @mentions or straight handle strings
+                    handles = await cf_common.resolve_handles(ctx, self.converter, args)
+                    handle = handles[0]
             except Exception as e:
                 msg = str(e) or "Could not resolve handle. Have you set it using the bot's identify command?"
                 return await ctx.send(f"❌ {msg}")
@@ -219,13 +225,10 @@ class CP31(commands.Cog):
         if not rating: return await ctx.send("Usage: `;tle <rating>`")
         
         if HAS_CF_COMMON:
-            try:
-                # Passing an empty tuple tells TLE to fetch the author's saved handle
-                handles = await cf_common.resolve_handles(ctx, self.converter, tuple())
-                handle = handles[0]
-            except Exception as e:
-                msg = str(e) or "Set your handle first via the bot's identity commands."
-                return await ctx.send(f"❌ {msg}")
+            # Fetch handle directly from DB instead of using resolve_handles to avoid min/max arguments error
+            handle = cf_common.user_db.get_handle(ctx.author.id, "Global")
+            if not handle:
+                return await ctx.send("❌ Set your handle first via the bot's identify command.")
         else:
             return await ctx.send("❌ Cannot resolve handle because standard TLE dependencies are missing.")
 
