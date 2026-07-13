@@ -196,7 +196,6 @@ class CP31(commands.Cog):
             if not handle:
                 return await ctx.send("Usage: `;tle_handle <handle>`")
         
-        # Show progress indicator
         wait_msg = await ctx.send(f"⏳ Fetching CP31 progress for `{handle}`, please wait...")
         
         solved = await self._get_solved_problems(handle)
@@ -216,7 +215,6 @@ class CP31(commands.Cog):
             done, total = stats[r]
             if total > 0: embed.add_field(name=f"{r}", value=f"{done}/{total} ({int(done/total*100)}%)", inline=True)
             
-        # Edit the waiting message with the final embed
         await wait_msg.edit(content=None, embed=embed)
 
     @commands.group(name="tle", invoke_without_command=True)
@@ -242,7 +240,6 @@ class CP31(commands.Cog):
         self.cursor.execute('UPDATE users SET handle = ? WHERE discord_id = ?', (handle, ctx.author.id))
         self.conn.commit()
 
-        # Show progress indicator
         wait_msg = await ctx.send("⏳ Searching for a suitable unsolved problem...")
 
         all_problems = self._get_problems_by_rating([rating])
@@ -290,6 +287,43 @@ class CP31(commands.Cog):
             await wait_msg.edit(content=f"✅ Challenge completed! **+{points_gained} points** awarded.")
         else:
             await wait_msg.edit(content="❌ Problem not marked as solved on Codeforces yet. Make sure your submission is Accepted!")
+
+    @commands.command(name="tle_leaderboard", aliases=["tle_lb"])
+    async def tle_leaderboard(self, ctx, limit: int = 15):
+        """
+        Shows the CP31 leaderboard.
+        
+        Points are awarded based on the difficulty of the problem solved.
+        Formula: Points = Rating / 100
+        For example: An 800-rated problem gives 8 points, a 1500 gives 15 points, etc.
+        """
+        self.cursor.execute('SELECT discord_id, handle, points FROM users WHERE points > 0 ORDER BY points DESC LIMIT ?', (limit,))
+        users_data = self.cursor.fetchall()
+        
+        if not users_data:
+            return await ctx.send("🏆 The leaderboard is currently empty! Use `;tle <rating>` to start earning points.")
+            
+        current_handle = None
+        if HAS_CF_COMMON:
+            current_handle = cf_common.user_db.get_handle(ctx.author.id, "Global")
+        else:
+            self.cursor.execute('SELECT handle FROM users WHERE discord_id = ?', (ctx.author.id,))
+            row = self.cursor.fetchone()
+            if row: current_handle = row[0]
+            
+        if HAS_PIL:
+            buf = self._generate_ranklist_image(users_data, current_handle)
+            if buf:
+                return await ctx.send(file=discord.File(buf, filename="leaderboard.png"))
+                
+        embed = discord.Embed(title="🏆 CP31 Leaderboard", color=0xFFD700)
+        desc = ""
+        for i, (disc_id, handle, points) in enumerate(users_data, start=1):
+            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"`{i}.`"
+            prefix = "**" if handle == current_handle else ""
+            desc += f"{medal} {prefix}{handle}{prefix}: {points} pts\n"
+        embed.description = desc
+        await ctx.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(CP31(bot))
