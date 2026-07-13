@@ -197,9 +197,12 @@ class CP31(commands.Cog):
         embed = discord.Embed(title="Handle Set!", description=f"Your handle is now linked to **{handle}**.", color=0x00FF00)
         await ctx.send(embed=embed)
 
-    @commands.command(name="tle")
-    async def tle_challenge(self, ctx, rating_input: str):
+    @commands.group(name="tle", invoke_without_command=True)
+    async def tle_challenge(self, ctx, rating_input: str = None):
         """Request a problem. Format: ;tle 800 OR ;tle 800-1200"""
+        if rating_input is None:
+            return await ctx.send("Usage: `;tle <rating>` or `;tle <rating1>-<rating2>`\nSubcommands: `;tle done`, `;tle skip`")
+
         self.cursor.execute('SELECT handle FROM users WHERE discord_id = ?', (ctx.author.id,))
         row = self.cursor.fetchone()
         if not row:
@@ -374,11 +377,6 @@ def setup(bot):
     """Function to load the cog automatically by discord.ext.commands"""
     bot.add_cog(CP31(bot))
 
-# ==============================================================================
-# The following block is optional but allows you to run this specific file 
-# directly to test it without injecting it into the main bot immediately.
-# Replace 'YOUR_DISCORD_BOT_TOKEN' if you want to run it standalone.
-# ==============================================================================
 if __name__ == "__main__":
     bot = commands.Bot(command_prefix=";", intents=discord.Intents.all())
     
@@ -388,4 +386,3 @@ if __name__ == "__main__":
         await bot.add_cog(CP31(bot))
         print("CP31 Cog Loaded Successfully.")
         
-    # bot.run("YOUR_DISCORD_BOT_TOKEN")
