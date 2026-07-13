@@ -363,6 +363,16 @@ class CP31(commands.Cog):
         else:
             await wait_msg.edit(content="❌ Problem not marked as solved on Codeforces yet. Make sure your submission is Accepted!")
 
+    @tle_challenge.command(name="skip")
+    async def tle_skip(self, ctx):
+        """Skips the currently active challenge."""
+        self.cursor.execute('SELECT problem_url FROM active_challenges WHERE discord_id = ?', (ctx.author.id,))
+        if not self.cursor.fetchone(): 
+            return await ctx.send("❌ You don't have an active challenge to skip.")
+            
+        self.cursor.execute('DELETE FROM active_challenges WHERE discord_id = ?', (ctx.author.id,))
+        self.conn.commit()
+        await ctx.send("✅ Active challenge skipped. You can now request a new one using `;tle <rating>`.")
 
     @commands.command(name="tle_leaderboard", aliases=["tle_lb"])
     async def tle_leaderboard(self, ctx, limit: int = 15):
