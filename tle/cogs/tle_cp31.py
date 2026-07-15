@@ -285,8 +285,9 @@ class CP31(commands.Cog):
 
         # Database checks before making API calls
         self.cursor.execute('SELECT problem_url FROM active_challenges WHERE discord_id = ?', (ctx.author.id,))
-        if self.cursor.fetchone(): 
-            return await ctx.send(content=f"🎯 **Your Active Challenge Awaits {handle} ({self.cursor.fetchone()[2]}):** {self.cursor.fetchone()[1]}")
+        testEntry = self.cursor.fetchone()
+        if testEntry: 
+            return await ctx.send(content=f"🎯 **Your Active Challenge Awaits {handle} ({testEntry[2]}):** {testEntry[1]}")
 
         # Parse the rating input (Handles single ratings and ranges like 1000-1500)
         target_ratings = []
