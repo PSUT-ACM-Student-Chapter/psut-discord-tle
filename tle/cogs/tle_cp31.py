@@ -287,7 +287,7 @@ class CP31(commands.Cog):
         self.cursor.execute('SELECT * FROM active_challenges WHERE discord_id = ?', (ctx.author.id,))
         testEntry = self.cursor.fetchone()
         if testEntry: 
-            return await ctx.send(content=f"🎯 **Your Active Challenge Awaits {handle} ({testEntry[2]}):** {testEntry[1]}")
+            return await ctx.send(content=f"🎯 **An Active Challenge Awaits {handle} ({testEntry[2]}):** {testEntry[1]}")
 
         # Parse the rating input (Handles single ratings and ranges like 1000-1500)
         target_ratings = []
