@@ -157,33 +157,36 @@ class Contests(commands.Cog):
         self.logger = logging.getLogger(self.__class__.__name__)
 
     async def _fetch_atcoder_contests_from_clist(self):
-        # NOTE: It's best practice to move these to environment variables later
         CLIST_USERNAME = "Darkvoidd"
-        CLIST_API_KEY = "6a0428550f9d8b30401a0420d9e979ede65bd2f1"
+        CLIST_API_KEY = "YOUR_API_KEY"  # Add your real key back here
 
         url = "https://clist.by/api/v4/contest/"
 
-        # Fetch from the last 7 days so we can populate the "FINISHED" list too
         now = dt.datetime.now(dt.timezone.utc)
         one_week_ago = (now - dt.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
 
-        params = {
-            "username": CLIST_USERNAME,
-            "api_key": CLIST_API_KEY,
-            "resource": "atcoder.jp",
-            "start__gte": one_week_ago,
-            "order_by": "start",
-        }
+        # v4 uses 'host' and expects UTC strings
+        params = {"host": "atcoder.jp", "start__gte": one_week_ago, "order_by": "start"}
+
+        # v4 standard is to use the Authorization header for API keys
+        headers = {"Authorization": f"ApiKey {CLIST_USERNAME}:{CLIST_API_KEY}"}
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params) as resp:
+                async with session.get(url, params=params, headers=headers) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        return [
-                            AtCoderContestAdapter(obj)
-                            for obj in data.get("objects", [])
-                        ]
+                        objects = data.get("objects", [])
+                        self.logger.info(
+                            f"SUCCESS: CLIST returned {len(objects)} AtCoder contests."
+                        )
+                        return [AtCoderContestAdapter(obj) for obj in objects]
+                    else:
+                        # If CLIST gets angry (e.g. 401 Unauthorized), we will now see it in the logs!
+                        error_text = await resp.text()
+                        self.logger.warning(
+                            f"CLIST API Error {resp.status}: {error_text}"
+                        )
         except Exception as e:
             self.logger.warning(f"Failed to fetch AtCoder contests from CLIST: {e}")
 
