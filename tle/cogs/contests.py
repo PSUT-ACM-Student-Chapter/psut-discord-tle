@@ -1,28 +1,26 @@
 import asyncio
+import datetime as dt
 import functools
+import gc
 import json
 import logging
 import time
-import datetime as dt
-import gc
 from collections import defaultdict, namedtuple
 
+import aiohttp
 import discord
 from discord.ext import commands
 from matplotlib import pyplot as plt
 
 from tle import constants
-from tle.util import codeforces_common as cf_common
 from tle.util import cache_system2
 from tle.util import codeforces_api as cf
-from tle.util import db
-from tle.util import discord_common
-from tle.util import events
+from tle.util import codeforces_common as cf_common
+from tle.util import db, discord_common, events
+from tle.util import graph_common as gc_graph
 from tle.util import paginator
 from tle.util import ranklist as rl
-from tle.util import table
-from tle.util import tasks
-from tle.util import graph_common as gc_graph
+from tle.util import table, tasks
 
 _CONTESTS_PER_PAGE = 5
 _CONTEST_PAGINATE_WAIT_TIME = 5 * 60
@@ -120,6 +118,29 @@ def _get_ongoing_vc_participants():
     return ongoing_vc_participants
 
 
+class AtCoderContestAdapter:
+    """Adapts a CLIST API JSON object to mimic TLE's Codeforces contest object."""
+
+    def __init__(self, data):
+        self.name = data.get("event", "Unknown Contest")
+
+        url = data.get("href", "")
+        self.register_url = url
+        self.id = url.rstrip("/").split("/")[-1] if "atcoder.jp" in url else "AC"
+
+        # Parse UTC start time from CLIST
+        start_str = data.get("start", "")
+        if not start_str.endswith("Z") and "+" not in start_str:
+            start_str += "+00:00"
+        self.startTimeSeconds = dt.datetime.fromisoformat(start_str).timestamp()
+
+        self.durationSeconds = data.get("duration", 0)
+        self.end_time = self.startTimeSeconds + self.durationSeconds
+
+        # Flag to safely bypass Codeforces-specific checks during reminder scheduling
+        self.is_atcoder = True
+
+
 class Contests(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -134,6 +155,39 @@ class Contests(commands.Cog):
         self.role_converter = commands.RoleConverter()
 
         self.logger = logging.getLogger(self.__class__.__name__)
+
+    async def _fetch_atcoder_contests_from_clist(self):
+        # NOTE: It's best practice to move these to environment variables later
+        CLIST_USERNAME = "Darkvoidd"
+        CLIST_API_KEY = "6a0428550f9d8b30401a0420d9e979ede65bd2f1"
+
+        url = "https://clist.by/api/v4/contest/"
+
+        # Fetch from the last 7 days so we can populate the "FINISHED" list too
+        now = dt.datetime.now(dt.timezone.utc)
+        one_week_ago = (now - dt.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
+
+        params = {
+            "username": CLIST_USERNAME,
+            "api_key": CLIST_API_KEY,
+            "resource": "atcoder.jp",
+            "start__gte": one_week_ago,
+            "order_by": "start",
+        }
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return [
+                            AtCoderContestAdapter(obj)
+                            for obj in data.get("objects", [])
+                        ]
+        except Exception as e:
+            self.logger.warning(f"Failed to fetch AtCoder contests from CLIST: {e}")
+
+        return []
 
     @commands.Cog.listener()
     @discord_common.once
@@ -155,18 +209,37 @@ class Contests(commands.Cog):
         )
         self.finished_contests = contest_cache.get_contests_in_phase("FINISHED")
 
-        # Future contests already sorted by start time.
+        # --- NEW: Fetch and merge AtCoder contests ---
+        atcoder_contests = await self._fetch_atcoder_contests_from_clist()
+        now = time.time()
+        for c in atcoder_contests:
+            # Manually map AtCoder times to TLE phase logic
+            if now < c.startTimeSeconds:
+                self.future_contests.append(c)
+            elif now <= c.end_time:
+                self.active_contests.append(c)
+            else:
+                self.finished_contests.append(c)
+
+        # Re-sort lists because we appended AtCoder contests to the end
+        self.future_contests.sort(key=lambda contest: contest.startTimeSeconds)
         self.active_contests.sort(key=lambda contest: contest.startTimeSeconds)
         self.finished_contests.sort(key=lambda contest: contest.end_time, reverse=True)
+
         # Keep most recent _FINISHED_LIMIT
         self.finished_contests = self.finished_contests[:_FINISHED_CONTESTS_LIMIT]
 
-        self.logger.info(f"Refreshed cache")
+        self.logger.info(f"Refreshed cache with CF and AtCoder")
         self.start_time_map.clear()
+
         for contest in self.future_contests:
-            if not cf_common.is_nonstandard_contest(contest):
-                # Exclude non-standard contests from reminders.
+            # Bypass CF non-standard checks safely using getattr if it's an AtCoder contest
+            if getattr(contest, "is_atcoder", False):
                 self.start_time_map[contest.startTimeSeconds].append(contest)
+            elif not cf_common.is_nonstandard_contest(contest):
+                # Exclude non-standard Codeforces contests from reminders.
+                self.start_time_map[contest.startTimeSeconds].append(contest)
+
         self._reschedule_all_tasks()
 
     def _reschedule_all_tasks(self):
@@ -1194,7 +1267,7 @@ class Contests(commands.Cog):
 
         # Output results
         # 1. Use a single space separator "{:<} {:<}..." instead of double space to save width
-        style = table.Style("{:<} {:<} {:>} {:>}") 
+        style = table.Style("{:<} {:<} {:>} {:>}")
         t = table.Table(style)
         t += table.Header(
             "#", "Name", "Official", "Predicted (C)" if from_cache else "Predicted"
@@ -1202,13 +1275,19 @@ class Contests(commands.Cog):
         t += table.Line()
         for i, index in enumerate(indicies):
             # 2. Truncate long problem names to 18 characters so they don't blow up the column width
-            name_short = problemNames[i][:18] + ".." if len(problemNames[i]) > 18 else problemNames[i]
-            t += table.Data(f"{index}", f"{name_short}", f"{officialRatings[i]}", f"{predicted[i]}")
-            
+            name_short = (
+                problemNames[i][:18] + ".."
+                if len(problemNames[i]) > 18
+                else problemNames[i]
+            )
+            t += table.Data(
+                f"{index}", f"{name_short}", f"{officialRatings[i]}", f"{predicted[i]}"
+            )
+
         table_str = f"```\n{t}\n```"
         url = f"{cf.CONTEST_BASE_URL}{contest_id}"
         title = reqcontest[0].name
-        
+
         # 3. FIX THE WRAPPING: Send the title as an embed, but the table as plain text content
         embed = discord_common.cf_color_embed(title=title, url=url)
         await ctx.send(content=table_str, embed=embed)
