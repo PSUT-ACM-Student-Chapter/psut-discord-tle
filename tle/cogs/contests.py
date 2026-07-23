@@ -158,7 +158,9 @@ class Contests(commands.Cog):
 
     async def _fetch_atcoder_contests_from_clist(self):
         CLIST_USERNAME = "Darkvoidd"
-        CLIST_API_KEY = "YOUR_API_KEY"  # Add your real key back here
+        CLIST_API_KEY = (
+            "6a0428550f9d8b30401a0420d9e979ede65bd2f1"  # Add your real key back here
+        )
 
         url = "https://clist.by/api/v4/contest/"
 
