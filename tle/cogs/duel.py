@@ -158,6 +158,7 @@ class Dueling(commands.Cog):
         data = cf_common.user_db.get_ongoing_duels(guild.id)
         channel_id = cf_common.user_db.get_duel_channel(guild.id)
         if channel_id == None:
+            logger.warn(f'_check_ongoing_duels_for_guild: guild id is {guild.id}')
             logger.warn(f'_check_ongoing_duels_for_guild: duel channel is not set.')
             return
 
