@@ -1237,7 +1237,8 @@ class Contests(commands.Cog):
             raw_rows = data['result']['rows']
 
             if contest.id == contest_id:
-                officialRatings = [prob.get('rating', 0) for prob in raw_problems]
+                # Use 'N/A' instead of 0 when Codeforces hasn't published the official ratings yet
+                officialRatings = [prob.get('rating', 'N/A') for prob in raw_problems]
                 indicies = [prob.get('index') for prob in raw_problems]
                 problemNames = [prob.get('name') for prob in raw_problems]
 
@@ -1254,12 +1255,14 @@ class Contests(commands.Cog):
                     with sqlite3.connect('data/cache.db') as conn:
                         cursor = conn.cursor()
                         contest_time = reqcontest[0].startTimeSeconds
+                        
+                        # FIX: Move MAX(rating_update_time) into the SELECT clause. 
+                        # SQLite guarantees new_rating will be pulled from this exact max row.
                         query = f"""
-                            SELECT handle, new_rating 
+                            SELECT handle, new_rating, MAX(rating_update_time)
                             FROM rating_change 
                             WHERE rating_update_time < ? AND handle IN ({query_placeholders})
                             GROUP BY handle 
-                            HAVING MAX(rating_update_time)
                         """
                         params = [contest_time] + handles_in_chunk
                         cursor.execute(query, params)
