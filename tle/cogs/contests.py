@@ -172,18 +172,18 @@ def calculate_all_difficulties(problem_names, aggregated_data):
         predicted.append(calculateDifficulty(ratings, solves))
     return predicted
 
-def fetch_historical_ratings_sync(db_path, timestamp):
-    """Runs in a background thread to prevent Discord heartbeat blocks."""
-    with sqlite3.connect(db_path) as conn:
-        query = '''
-            SELECT handle, new_rating 
-            FROM rating_change 
-            WHERE rating_update_time < ? 
-            GROUP BY handle 
-            HAVING MAX(rating_update_time)
-        '''
-        # Instantly format the results into a dictionary for fast O(1) lookups
-        return {row[0]: row[1] for row in conn.execute(query, (timestamp,)).fetchall()}
+def fetch_historical_ratings_sync(timestamp):
+    """Runs in a background thread using TLE's active database connection."""
+    # Access the active connection directly from TLE's cache system
+    conn = cf_common.cache2.conn
+    query = '''
+        SELECT handle, new_rating 
+        FROM rating_change 
+        WHERE rating_update_time < ? 
+        GROUP BY handle 
+        HAVING MAX(rating_update_time)
+    '''
+    return {row[0]: row[1] for row in conn.execute(query, (timestamp,)).fetchall()}
 
 class Contests(commands.Cog):
     def __init__(self, bot):
@@ -1256,26 +1256,21 @@ class Contests(commands.Cog):
             if len(rating_change) == 0:
                 from_cache = True
                 
-                # 1. THREAD OFFLOAD: Prevent the Shard ID None heartbeat timeout
+                # THREAD OFFLOAD using TLE's native connection
                 cached_ratings = await asyncio.to_thread(
                     fetch_historical_ratings_sync, 
-                    'data/cache.db', 
                     reqcontest[0].startTimeSeconds
                 )
 
                 for row in raw_rows:
                     member = row['party']['members'][0]['handle']
-                    # 2. MATH FIX: If the user is unrated, they are simply ignored. 
-                    # Assigning a 0 rating here is what dragged the algorithm into the negatives.
                     if member in cached_ratings:
                         rating_cache[member] = cached_ratings[member]
                 
-                # Free memory instantly
                 del cached_ratings
             else:
                 for change in rating_change:
                     rating_cache[change.handle] = change.oldRating
-
             for j, prob in enumerate(raw_problems):
                 prob_name = prob['name']
                 for row in raw_rows:
