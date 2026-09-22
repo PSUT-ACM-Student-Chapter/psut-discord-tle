@@ -4,6 +4,7 @@ import functools
 import gc
 import json
 import logging
+import sqlite3
 import time
 from collections import defaultdict, namedtuple
 
@@ -140,6 +141,36 @@ class AtCoderContestAdapter:
         # Flag to safely bypass Codeforces-specific checks during reminder scheduling
         self.is_atcoder = True
 
+
+def calculate_all_difficulties(problem_names, aggregated_data):
+    def calculateDifficulty(ratings, solved):
+        ans = -1000
+
+        def calcProb(dif):
+            prob = 1
+            d = 0
+            for r, s in zip(ratings, solved):
+                p = 1 / (1 + 10 ** ((dif - r) / 400))
+                d += p
+                if s:
+                    d -= 1
+                prob *= p if s else (1 - p)
+            return d > 0 and prob < 0.95
+
+        jump = 4096
+        while jump >= 1:
+            if calcProb(ans + jump):
+                ans += jump
+            jump /= 2
+        ans = round(ans + 1)
+        return ans
+
+    predicted = []
+    for name in problem_names:
+        ratings = aggregated_data[name]["ratings"]
+        solves = aggregated_data[name]["solves"]
+        predicted.append(calculateDifficulty(ratings, solves))
+    return predicted
 
 class Contests(commands.Cog):
     def __init__(self, bot):
@@ -1179,7 +1210,6 @@ class Contests(commands.Cog):
             if reqcontest[0].startTimeSeconds == contest.startTimeSeconds
         ]
 
-        # Use a dictionary to store ONLY the integers we need, avoiding massive object lists
         aggregated_data = defaultdict(lambda: {"ratings": [], "solves": []})
         officialRatings = []
         indicies = []
@@ -1187,102 +1217,109 @@ class Contests(commands.Cog):
         from_cache = False
 
         for contest in combined:
-            _, problem, ranklist = await cf.contest.standings(
-                contest_id=contest.id, show_unofficial=False
-            )
-
-            if contest.id == contest_id:
-                officialRatings = [prob.rating for prob in problem]
-                indicies = [prob.index for prob in problem]
-                problemNames = [prob.name for prob in problem]
-
-            # Build rating cache for THIS specific contest
-            rating_cache = dict()
+            # Determine if we need to use cache for this contest
+            rating_cache_global = {}
             try:
                 rating_change = await cf.contest.ratingChanges(contest_id=contest.id)
-            except cf.RatingChangesUnavailableError:
-                rating_change = []
-
-            if len(rating_change) == 0:
-                if len(ranklist) > 10000: 
-                    await ctx.send("Official ratings aren't out yet, and the contest is too large to estimate safely. Try again later.")
-                    return
-                from_cache = True
-                cached_ratings = await cf_common.cache2.rating_changes_cache.get_all_ratings_before_timestamp(
-                    reqcontest[0].startTimeSeconds
-                )
-                for row in ranklist:
-                    member = row.party.members[0].handle
-                    if member in cached_ratings:
-                        rating_cache[member] = cached_ratings[member].newRating
-                    else:
-                        rating_cache[member] = 0
-
-                # CRITICAL: Free the cached ratings copy from memory
-                del cached_ratings
-            else:
                 for change in rating_change:
-                    rating_cache[change.handle] = change.oldRating
+                    rating_cache_global[change.handle] = change.oldRating
+            except cf.RatingChangesUnavailableError:
+                from_cache = True
 
-            # Parse the ranklist and extract ONLY the solve data
-            for j, prob in enumerate(problem):
-                prob_name = prob.name
-                for row in ranklist:
-                    member = row.party.members[0].handle
-                    if member in rating_cache:
-                        aggregated_data[prob_name]["solves"].append(
-                            min(row.problemResults[j].points, 1)
-                        )
-                        aggregated_data[prob_name]["ratings"].append(
-                            rating_cache[member]
-                        )
+            # API Pagination Setup
+            chunk_size = 2000
+            current_start = 1
 
-            # CRITICAL: Delete massive ranklist objects before the next loop iteration
-            del ranklist
-            del rating_cache
-            del rating_change
+            while True:
+                # 1. Fetch only a specific chunk of users
+                _, problem, ranklist = await cf.contest.standings(
+                    contest_id=contest.id, 
+                    show_unofficial=False,
+                    from_=current_start,
+                    count=chunk_size
+                )
 
-            # Force garbage collection to reclaim memory instantly
+                # Break the loop if we've reached the end of the ranklist
+                if not ranklist:
+                    break
+
+                if contest.id == contest_id and current_start == 1:
+                    officialRatings = [prob.rating for prob in problem]
+                    indicies = [prob.index for prob in problem]
+                    problemNames = [prob.name for prob in problem]
+
+                rating_cache = {}
+                handles_in_chunk = [row.party.members[0].handle for row in ranklist]
+
+                if from_cache:
+                    query_placeholders = ','.join('?' for _ in handles_in_chunk)
+                    
+                    # 2. SQLite Integration using the correct cache.db schema
+                    with sqlite3.connect('data/cache.db') as conn:
+                        cursor = conn.cursor()
+                        
+                        # Get the start time to ensure we only look at ratings BEFORE this contest
+                        contest_time = reqcontest[0].startTimeSeconds
+                        
+                        # SQLite feature: GROUP BY + HAVING MAX() fetches the specific row with the latest timestamp
+                        query = f"""
+                            SELECT handle, new_rating 
+                            FROM rating_change 
+                            WHERE rating_update_time < ? AND handle IN ({query_placeholders})
+                            GROUP BY handle 
+                            HAVING MAX(rating_update_time)
+                        """
+                        
+                        # Combine the timestamp with the chunk of handles for the parameterized query
+                        params = [contest_time] + handles_in_chunk
+                        cursor.execute(query, params)
+                        db_results = cursor.fetchall()
+                        
+                    for row in db_results:
+                        rating_cache[row[0]] = row[1]
+                        
+                    for handle in handles_in_chunk:
+                        if handle not in rating_cache:
+                            rating_cache[handle] = 0
+                else:
+                    for handle in handles_in_chunk:
+                        rating_cache[handle] = rating_cache_global.get(handle, 0)
+
+                for j, prob in enumerate(problem):
+                    prob_name = prob.name
+                    for row in ranklist:
+                        member = row.party.members[0].handle
+                        if member in rating_cache:
+                            aggregated_data[prob_name]["solves"].append(
+                                min(row.problemResults[j].points, 1)
+                            )
+                            aggregated_data[prob_name]["ratings"].append(
+                                rating_cache[member]
+                            )
+
+                current_start += chunk_size
+                del ranklist
+                del rating_cache
+                gc.collect()
+                
+            del rating_cache_global
             gc.collect()
 
-        def calculateDifficulty(ratings, solved):
-            ans = -1000
+        # 3. Offload the heavy math calculations
+        predicted = await asyncio.to_thread(
+            calculate_all_difficulties, 
+            problemNames, 
+            dict(aggregated_data)
+        )
 
-            def calcProb(dif):
-                prob = 1
-                d = 0
-                for r, s in zip(ratings, solved):
-                    p = 1 / (1 + 10 ** ((dif - r) / 400))
-                    d += p
-                    if s:
-                        d -= 1
-                    prob *= p if s else (1 - p)
-                return d > 0 and prob < 0.95
-
-            jump = 4096
-            while jump >= 1:
-                if calcProb(ans + jump):
-                    ans += jump
-                jump /= 2
-            ans = round(ans + 1)
-            return ans
-
-        predicted = []
-        for name in problemNames:
-            ratings = aggregated_data[name]["ratings"]
-            solves = aggregated_data[name]["solves"]
-            predicted.append(calculateDifficulty(ratings, solves))
-
-        # Output results
-        # 1. Use a single space separator "{:<} {:<}..." instead of double space to save width
         style = table.Style("{:<} {:<} {:>} {:>}")
         t = table.Table(style)
         t += table.Header(
             "#", "Name", "Official", "Predicted (C)" if from_cache else "Predicted"
         )
         t += table.Line()
+        
         for i, index in enumerate(indicies):
-            # 2. Truncate long problem names to 18 characters so they don't blow up the column width
             name_short = (
                 problemNames[i][:18] + ".."
                 if len(problemNames[i]) > 18
@@ -1296,10 +1333,8 @@ class Contests(commands.Cog):
         url = f"{cf.CONTEST_BASE_URL}{contest_id}"
         title = reqcontest[0].name
 
-        # 3. FIX THE WRAPPING: Send the title as an embed, but the table as plain text content
         embed = discord_common.cf_color_embed(title=title, url=url)
         await ctx.send(content=table_str, embed=embed)
-
     @discord_common.send_error_if(
         ContestCogError,
         rl.RanklistError,
