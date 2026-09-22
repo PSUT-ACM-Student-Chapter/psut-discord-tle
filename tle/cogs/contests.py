@@ -1225,12 +1225,12 @@ class Contests(commands.Cog):
             except cf.RatingChangesUnavailableError:
                 from_cache = True
 
-            # DIRECT API CALL: Bypass the heavy TLE wrapper to save hundreds of MBs of RAM
-            url = f"https://codeforces.com/api/contest.standings?contestId={contest.id}&showUnofficial=false"
+            # DIRECT API CALL: Strictly adhere to anonymous API rules (no extra parameters)
+            url = f"https://codeforces.com/api/contest.standings?contestId={contest.id}"
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as resp:
                     if resp.status != 200:
-                        raise ContestCogError(f"Failed to fetch standings for contest {contest.id}.")
+                        raise ContestCogError(f"Failed to fetch standings for contest {contest.id}. API Status: {resp.status}")
                     data = await resp.json()
             
             raw_problems = data['result']['problems']
