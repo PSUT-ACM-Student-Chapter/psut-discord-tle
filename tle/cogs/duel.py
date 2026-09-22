@@ -155,7 +155,7 @@ class Dueling(commands.Cog):
     async def _check_ongoing_duels_for_guild(self, guild):
         logger.info(f'_check_ongoing_duels_for_guild: running for {guild.id}')
         # check for ongoing duels that are older than _DUEL_MAX_DUEL_DURATION
-        data = cf_common.user_db.get_ongoing_duels(guild.name)
+        data = cf_common.user_db.get_ongoing_duels(guild.id)
         channel_id = cf_common.user_db.get_duel_channel(guild.id)
         if channel_id == None:
             logger.warn(f'_check_ongoing_duels_for_guild: duel channel is not set.')

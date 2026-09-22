@@ -4,7 +4,6 @@ import functools
 import gc
 import json
 import logging
-import sqlite3
 import time
 from collections import defaultdict, namedtuple
 
@@ -141,52 +140,6 @@ class AtCoderContestAdapter:
         # Flag to safely bypass Codeforces-specific checks during reminder scheduling
         self.is_atcoder = True
 
-
-def calculate_all_difficulties(problem_names, aggregated_data):
-    def calculateDifficulty(ratings, solved):
-        ans = -1000
-
-        def calcProb(dif):
-            prob = 1
-            d = 0
-            for r, s in zip(ratings, solved):
-                p = 1 / (1 + 10 ** ((dif - r) / 400))
-                d += p
-                if s:
-                    d -= 1
-                prob *= p if s else (1 - p)
-            return d > 0 and prob < 0.95
-
-        jump = 4096
-        while jump >= 1:
-            if calcProb(ans + jump):
-                ans += jump
-            jump /= 2
-        ans = round(ans + 1)
-        return ans
-
-    predicted = []
-    for name in problem_names:
-        ratings = aggregated_data[name]["ratings"]
-        solves = aggregated_data[name]["solves"]
-        predicted.append(calculateDifficulty(ratings, solves))
-    return predicted
-
-def fetch_historical_ratings_sync(timestamp):
-    """Queries cache.db using TLE's configured database path."""
-    # Fallback to TLE's standard relative path if constants aren't imported
-    db_file = getattr(constants, 'CACHE_DB_FILE', 'data/cache.db')
-    with sqlite3.connect(db_file) as conn:
-        cursor = conn.cursor()
-        query = '''
-            SELECT handle, new_rating 
-            FROM rating_change 
-            WHERE rating_update_time < ? 
-            GROUP BY handle 
-            HAVING MAX(rating_update_time)
-        '''
-        cursor.execute(query, (timestamp,))
-        return {row[0]: row[1] for row in cursor.fetchall()}
 
 class Contests(commands.Cog):
     def __init__(self, bot):
@@ -1226,6 +1179,7 @@ class Contests(commands.Cog):
             if reqcontest[0].startTimeSeconds == contest.startTimeSeconds
         ]
 
+        # Use a dictionary to store ONLY the integers we need, avoiding massive object lists
         aggregated_data = defaultdict(lambda: {"ratings": [], "solves": []})
         officialRatings = []
         indicies = []
@@ -1233,76 +1187,99 @@ class Contests(commands.Cog):
         from_cache = False
 
         for contest in combined:
-            rating_cache = {}
-            
+            _, problem, ranklist = await cf.contest.standings(
+                contest_id=contest.id, show_unofficial=False
+            )
+
+            if contest.id == contest_id:
+                officialRatings = [prob.rating for prob in problem]
+                indicies = [prob.index for prob in problem]
+                problemNames = [prob.name for prob in problem]
+
+            # Build rating cache for THIS specific contest
+            rating_cache = dict()
             try:
                 rating_change = await cf.contest.ratingChanges(contest_id=contest.id)
             except cf.RatingChangesUnavailableError:
                 rating_change = []
 
-            # Use raw JSON to prevent massive RanklistRow objects from causing an Out of Memory crash
-            url = f"https://codeforces.com/api/contest.standings?contestId={contest.id}"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    if resp.status != 200:
-                        raise ContestCogError(f"Failed to fetch standings for contest {contest.id}. API Status: {resp.status}")
-                    data = await resp.json()
-            
-            raw_problems = data['result']['problems']
-            raw_rows = data['result']['rows']
-
-            if contest.id == contest_id:
-                officialRatings = [prob.get('rating', 'N/A') for prob in raw_problems]
-                indicies = [prob.get('index') for prob in raw_problems]
-                problemNames = [prob.get('name') for prob in raw_problems]
-
             if len(rating_change) == 0:
                 from_cache = True
-                
-                # Run the direct SQLite query safely in a background thread
-                cached_ratings = await asyncio.to_thread(
-                    fetch_historical_ratings_sync, 
+                cached_ratings = await cf_common.cache2.rating_changes_cache.get_all_ratings_before_timestamp(
                     reqcontest[0].startTimeSeconds
                 )
-
-                for row in raw_rows:
-                    member = row['party']['members'][0]['handle']
+                for row in ranklist:
+                    member = row.party.members[0].handle
                     if member in cached_ratings:
-                        rating_cache[member] = cached_ratings[member]
-                
+                        rating_cache[member] = cached_ratings[member].newRating
+                    else:
+                        rating_cache[member] = 0
+
+                # CRITICAL: Free the cached ratings copy from memory
                 del cached_ratings
             else:
                 for change in rating_change:
                     rating_cache[change.handle] = change.oldRating
-            for j, prob in enumerate(raw_problems):
-                prob_name = prob['name']
-                for row in raw_rows:
-                    member = row['party']['members'][0]['handle']
+
+            # Parse the ranklist and extract ONLY the solve data
+            for j, prob in enumerate(problem):
+                prob_name = prob.name
+                for row in ranklist:
+                    member = row.party.members[0].handle
                     if member in rating_cache:
-                        points = row['problemResults'][j].get('points', 0)
-                        aggregated_data[prob_name]["solves"].append(min(points, 1))
-                        aggregated_data[prob_name]["ratings"].append(rating_cache[member])
-            
-            # Explicitly destroy the massive JSON payload before the next contest loop
-            del data
-            del raw_rows
-            del raw_problems
+                        aggregated_data[prob_name]["solves"].append(
+                            min(row.problemResults[j].points, 1)
+                        )
+                        aggregated_data[prob_name]["ratings"].append(
+                            rating_cache[member]
+                        )
+
+            # CRITICAL: Delete massive ranklist objects before the next loop iteration
+            del ranklist
+            del rating_cache
+            del rating_change
+
+            # Force garbage collection to reclaim memory instantly
             gc.collect()
 
-        predicted = await asyncio.to_thread(
-            calculate_all_difficulties, 
-            problemNames, 
-            dict(aggregated_data)
-        )
+        def calculateDifficulty(ratings, solved):
+            ans = -1000
 
+            def calcProb(dif):
+                prob = 1
+                d = 0
+                for r, s in zip(ratings, solved):
+                    p = 1 / (1 + 10 ** ((dif - r) / 400))
+                    d += p
+                    if s:
+                        d -= 1
+                    prob *= p if s else (1 - p)
+                return d > 0 and prob < 0.95
+
+            jump = 4096
+            while jump >= 1:
+                if calcProb(ans + jump):
+                    ans += jump
+                jump /= 2
+            ans = round(ans + 1)
+            return ans
+
+        predicted = []
+        for name in problemNames:
+            ratings = aggregated_data[name]["ratings"]
+            solves = aggregated_data[name]["solves"]
+            predicted.append(calculateDifficulty(ratings, solves))
+
+        # Output results
+        # 1. Use a single space separator "{:<} {:<}..." instead of double space to save width
         style = table.Style("{:<} {:<} {:>} {:>}")
         t = table.Table(style)
         t += table.Header(
             "#", "Name", "Official", "Predicted (C)" if from_cache else "Predicted"
         )
         t += table.Line()
-        
         for i, index in enumerate(indicies):
+            # 2. Truncate long problem names to 18 characters so they don't blow up the column width
             name_short = (
                 problemNames[i][:18] + ".."
                 if len(problemNames[i]) > 18
@@ -1316,6 +1293,7 @@ class Contests(commands.Cog):
         url = f"{cf.CONTEST_BASE_URL}{contest_id}"
         title = reqcontest[0].name
 
+        # 3. FIX THE WRAPPING: Send the title as an embed, but the table as plain text content
         embed = discord_common.cf_color_embed(title=title, url=url)
         await ctx.send(content=table_str, embed=embed)
 
