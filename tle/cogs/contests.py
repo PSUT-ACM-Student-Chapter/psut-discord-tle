@@ -1204,6 +1204,9 @@ class Contests(commands.Cog):
                 rating_change = []
 
             if len(rating_change) == 0:
+                if len(ranklist) > 10000: 
+                    await ctx.send("Official ratings aren't out yet, and the contest is too large to estimate safely. Try again later.")
+                    return
                 from_cache = True
                 cached_ratings = await cf_common.cache2.rating_changes_cache.get_all_ratings_before_timestamp(
                     reqcontest[0].startTimeSeconds
