@@ -172,10 +172,21 @@ def calculate_all_difficulties(problem_names, aggregated_data):
         predicted.append(calculateDifficulty(ratings, solves))
     return predicted
 
-async def fetch_historical_ratings_async(timestamp):
-    """Fetches historical ratings asynchronously using TLE's native cache method."""
-    cached_list = await cf_common.cache2.rating_changes_cache.get_all_ratings_before_timestamp(timestamp)
-    return {change.handle: change.newRating for change in cached_list}
+def fetch_historical_ratings_sync(timestamp):
+    """Directly queries cache.db in a background thread to bypass wrapper errors."""
+    import os
+    db_path = os.path.join(os.getcwd(), 'data', 'cache.db')
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+        query = '''
+            SELECT handle, new_rating 
+            FROM rating_change 
+            WHERE rating_update_time < ? 
+            GROUP BY handle 
+            HAVING MAX(rating_update_time)
+        '''
+        cursor.execute(query, (timestamp,))
+        return {row[0]: row[1] for row in cursor.fetchall()}
 
 class Contests(commands.Cog):
     def __init__(self, bot):
@@ -1248,8 +1259,11 @@ class Contests(commands.Cog):
             if len(rating_change) == 0:
                 from_cache = True
                 
-                # Fetch ratings asynchronously without blocking the event loop or threads
-                cached_ratings = await fetch_historical_ratings_async(reqcontest[0].startTimeSeconds)
+                # Run the direct SQLite query safely in a background thread
+                cached_ratings = await asyncio.to_thread(
+                    fetch_historical_ratings_sync, 
+                    reqcontest[0].startTimeSeconds
+                )
 
                 for row in raw_rows:
                     member = row['party']['members'][0]['handle']
