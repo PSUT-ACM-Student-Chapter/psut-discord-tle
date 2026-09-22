@@ -1217,14 +1217,15 @@ class Contests(commands.Cog):
         from_cache = False
 
         for contest in combined:
-            rating_cache = {}
-            
+            rating_cache_global = {}
             try:
                 rating_change = await cf.contest.ratingChanges(contest_id=contest.id)
+                for change in rating_change:
+                    rating_cache_global[change.handle] = change.oldRating
             except cf.RatingChangesUnavailableError:
-                rating_change = []
+                from_cache = True
 
-            # Use raw JSON to prevent massive RanklistRow objects from causing an Out of Memory crash
+            # DIRECT API CALL: Adhere to anonymous API rules
             url = f"https://codeforces.com/api/contest.standings?contestId={contest.id}"
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as resp:
@@ -1240,41 +1241,58 @@ class Contests(commands.Cog):
                 indicies = [prob.get('index') for prob in raw_problems]
                 problemNames = [prob.get('name') for prob in raw_problems]
 
-            if len(rating_change) == 0:
-                from_cache = True
-                # Fetch from TLE's built-in cache database
-                cached_list = await cf_common.cache2.rating_changes_cache.get_all_ratings_before_timestamp(
-                    reqcontest[0].startTimeSeconds
-                )
+            # Chunk the local processing to prevent Discord heartbeat blocks
+            chunk_size = 900 
+            for i in range(0, len(raw_rows), chunk_size):
+                row_chunk = raw_rows[i:i + chunk_size]
+                handles_in_chunk = [row['party']['members'][0]['handle'] for row in row_chunk]
                 
-                # FIX: Convert the list of objects into a dictionary so the 'in' check actually works
-                cached_ratings = {change.handle: change.newRating for change in cached_list}
-                del cached_list # Free memory instantly
-
-                for row in raw_rows:
-                    member = row['party']['members'][0]['handle']
-                    # This check now maps handles to ratings correctly instead of defaulting to 0
-                    if member in cached_ratings:
-                        rating_cache[member] = cached_ratings[member]
+                rating_cache = {}
                 
-                del cached_ratings
-            else:
-                for change in rating_change:
-                    rating_cache[change.handle] = change.oldRating
+                if from_cache:
+                    query_placeholders = ','.join('?' for _ in handles_in_chunk)
+                    with sqlite3.connect('data/cache.db') as conn:
+                        cursor = conn.cursor()
+                        contest_time = reqcontest[0].startTimeSeconds
+                        
+                        # CORRECTED SQL: MAX() in the SELECT guarantees the current rating
+                        query = f"""
+                            SELECT handle, new_rating, MAX(rating_update_time) 
+                            FROM rating_change 
+                            WHERE rating_update_time < ? AND handle IN ({query_placeholders})
+                            GROUP BY handle 
+                        """
+                        params = [contest_time] + handles_in_chunk
+                        cursor.execute(query, params)
+                        db_results = cursor.fetchall()
+                        
+                    for row in db_results:
+                        rating_cache[row[0]] = row[1]
+                        
+                    for handle in handles_in_chunk:
+                        if handle not in rating_cache:
+                            rating_cache[handle] = 0
+                else:
+                    for handle in handles_in_chunk:
+                        rating_cache[handle] = rating_cache_global.get(handle, 0)
 
-            for j, prob in enumerate(raw_problems):
-                prob_name = prob['name']
-                for row in raw_rows:
-                    member = row['party']['members'][0]['handle']
-                    if member in rating_cache:
-                        points = row['problemResults'][j].get('points', 0)
-                        aggregated_data[prob_name]["solves"].append(min(points, 1))
-                        aggregated_data[prob_name]["ratings"].append(rating_cache[member])
+                for j, prob in enumerate(raw_problems):
+                    prob_name = prob['name']
+                    for row in row_chunk:
+                        member = row['party']['members'][0]['handle']
+                        if member in rating_cache:
+                            points = row['problemResults'][j].get('points', 0)
+                            aggregated_data[prob_name]["solves"].append(min(points, 1))
+                            aggregated_data[prob_name]["ratings"].append(rating_cache[member])
+                
+                del rating_cache
+                del handles_in_chunk
+                del row_chunk
             
-            # Explicitly destroy the massive JSON payload before the next contest loop
             del data
             del raw_rows
             del raw_problems
+            del rating_cache_global
             gc.collect()
 
         predicted = await asyncio.to_thread(
