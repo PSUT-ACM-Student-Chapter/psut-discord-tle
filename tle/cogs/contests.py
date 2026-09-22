@@ -173,11 +173,18 @@ def calculate_all_difficulties(problem_names, aggregated_data):
     return predicted
 
 def fetch_historical_ratings_sync(timestamp):
-    """Runs in a background thread using TLE's native cache method."""
-    # Use TLE's built-in cache system method which safely returns the rating change objects
-    cached_list = cf_common.cache2.rating_changes_cache.get_all_ratings_before_timestamp(timestamp)
-    # Convert them into a fast O(1) dictionary lookup
-    return {change.handle: change.newRating for change in cached_list}
+    """Runs safely in a background thread using direct SQLite access to cache.db."""
+    import os
+    db_path = os.path.join(os.getcwd(), 'data', 'cache.db')
+    with sqlite3.connect(db_path) as conn:
+        query = '''
+            SELECT handle, new_rating 
+            FROM rating_change 
+            WHERE rating_update_time < ? 
+            GROUP BY handle 
+            HAVING MAX(rating_update_time)
+        '''
+        return {row[0]: row[1] for row in conn.execute(query, (timestamp,)).fetchall()}
 
 class Contests(commands.Cog):
     def __init__(self, bot):
