@@ -173,10 +173,10 @@ def calculate_all_difficulties(problem_names, aggregated_data):
     return predicted
 
 def fetch_historical_ratings_sync(timestamp):
-    """Directly queries cache.db in a background thread to bypass wrapper errors."""
-    import os
-    db_path = os.path.join(os.getcwd(), 'data', 'cache.db')
-    with sqlite3.connect(db_path) as conn:
+    """Queries cache.db using TLE's configured database path."""
+    # Fallback to TLE's standard relative path if constants aren't imported
+    db_file = getattr(constants, 'CACHE_DB_FILE', 'data/cache.db')
+    with sqlite3.connect(db_file) as conn:
         cursor = conn.cursor()
         query = '''
             SELECT handle, new_rating 
