@@ -172,6 +172,19 @@ def calculate_all_difficulties(problem_names, aggregated_data):
         predicted.append(calculateDifficulty(ratings, solves))
     return predicted
 
+def fetch_historical_ratings_sync(db_path, timestamp):
+    """Runs in a background thread to prevent Discord heartbeat blocks."""
+    with sqlite3.connect(db_path) as conn:
+        query = '''
+            SELECT handle, new_rating 
+            FROM rating_change 
+            WHERE rating_update_time < ? 
+            GROUP BY handle 
+            HAVING MAX(rating_update_time)
+        '''
+        # Instantly format the results into a dictionary for fast O(1) lookups
+        return {row[0]: row[1] for row in conn.execute(query, (timestamp,)).fetchall()}
+
 class Contests(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -1217,15 +1230,14 @@ class Contests(commands.Cog):
         from_cache = False
 
         for contest in combined:
-            rating_cache_global = {}
+            rating_cache = {}
+            
             try:
                 rating_change = await cf.contest.ratingChanges(contest_id=contest.id)
-                for change in rating_change:
-                    rating_cache_global[change.handle] = change.oldRating
             except cf.RatingChangesUnavailableError:
-                from_cache = True
+                rating_change = []
 
-            # DIRECT API CALL: Adhere to anonymous API rules
+            # Use raw JSON to prevent massive RanklistRow objects from causing an Out of Memory crash
             url = f"https://codeforces.com/api/contest.standings?contestId={contest.id}"
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as resp:
@@ -1241,58 +1253,42 @@ class Contests(commands.Cog):
                 indicies = [prob.get('index') for prob in raw_problems]
                 problemNames = [prob.get('name') for prob in raw_problems]
 
-            # Chunk the local processing to prevent Discord heartbeat blocks
-            chunk_size = 900 
-            for i in range(0, len(raw_rows), chunk_size):
-                row_chunk = raw_rows[i:i + chunk_size]
-                handles_in_chunk = [row['party']['members'][0]['handle'] for row in row_chunk]
+            if len(rating_change) == 0:
+                from_cache = True
                 
-                rating_cache = {}
-                
-                if from_cache:
-                    query_placeholders = ','.join('?' for _ in handles_in_chunk)
-                    with sqlite3.connect('data/cache.db') as conn:
-                        cursor = conn.cursor()
-                        contest_time = reqcontest[0].startTimeSeconds
-                        
-                        # CORRECTED SQL: MAX() in the SELECT guarantees the current rating
-                        query = f"""
-                            SELECT handle, new_rating, MAX(rating_update_time) 
-                            FROM rating_change 
-                            WHERE rating_update_time < ? AND handle IN ({query_placeholders})
-                            GROUP BY handle 
-                        """
-                        params = [contest_time] + handles_in_chunk
-                        cursor.execute(query, params)
-                        db_results = cursor.fetchall()
-                        
-                    for row in db_results:
-                        rating_cache[row[0]] = row[1]
-                        
-                    for handle in handles_in_chunk:
-                        if handle not in rating_cache:
-                            rating_cache[handle] = 0
-                else:
-                    for handle in handles_in_chunk:
-                        rating_cache[handle] = rating_cache_global.get(handle, 0)
+                # 1. THREAD OFFLOAD: Prevent the Shard ID None heartbeat timeout
+                cached_ratings = await asyncio.to_thread(
+                    fetch_historical_ratings_sync, 
+                    'data/cache.db', 
+                    reqcontest[0].startTimeSeconds
+                )
 
-                for j, prob in enumerate(raw_problems):
-                    prob_name = prob['name']
-                    for row in row_chunk:
-                        member = row['party']['members'][0]['handle']
-                        if member in rating_cache:
-                            points = row['problemResults'][j].get('points', 0)
-                            aggregated_data[prob_name]["solves"].append(min(points, 1))
-                            aggregated_data[prob_name]["ratings"].append(rating_cache[member])
+                for row in raw_rows:
+                    member = row['party']['members'][0]['handle']
+                    # 2. MATH FIX: If the user is unrated, they are simply ignored. 
+                    # Assigning a 0 rating here is what dragged the algorithm into the negatives.
+                    if member in cached_ratings:
+                        rating_cache[member] = cached_ratings[member]
                 
-                del rating_cache
-                del handles_in_chunk
-                del row_chunk
+                # Free memory instantly
+                del cached_ratings
+            else:
+                for change in rating_change:
+                    rating_cache[change.handle] = change.oldRating
+
+            for j, prob in enumerate(raw_problems):
+                prob_name = prob['name']
+                for row in raw_rows:
+                    member = row['party']['members'][0]['handle']
+                    if member in rating_cache:
+                        points = row['problemResults'][j].get('points', 0)
+                        aggregated_data[prob_name]["solves"].append(min(points, 1))
+                        aggregated_data[prob_name]["ratings"].append(rating_cache[member])
             
+            # Explicitly destroy the massive JSON payload before the next contest loop
             del data
             del raw_rows
             del raw_problems
-            del rating_cache_global
             gc.collect()
 
         predicted = await asyncio.to_thread(
