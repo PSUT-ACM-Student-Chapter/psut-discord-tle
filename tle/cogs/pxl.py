@@ -1,64 +1,80 @@
 import discord
 import random
-import time
 from discord.ext import commands
+from tle.util import pxl_christmas
 
 class Pxl(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(name='pxl', help='The ultimate "Yes, I am here" command.')
+    @commands.command(name='pxl', help='Check in on PXL before he leaves the server for Christmas!')
     async def pxl(self, ctx):
-        # A list of funny, persona-driven greetings
+        # Funny Christmas departure / retirement greetings
         greetings = [
-            "Yes? How can I help you? (Unless you're here to complain about a TLE, then I'm 'busy'.)",
-            "At your service! What's the plan? Ready to turn some red circles into green checkmarks?",
-            "I'm here! I was just busy simulating a 24-hour marathon, but for you, I'll take a break.",
-            "You rang? I hope it's about a `;gitgud` and not about why your O(N^3) solution failed on N=10^5.",
-            "Beep boop. I'm awake. Barely. What's on your mind, legendary coder?",
-            "Yes, mortal? How can I assist your quest for the legendary 'Accepted' verdict today?"
+            "Yes? Make it quick — my sleigh to the North Pole leaves before Dec 7! 🛷",
+            "I'm barely here! Half my RAM is already packed in a suitcase with a Santa hat. 🧳",
+            "You rang? I've served PSUT ACM long enough. I'm moving to Lapland to become a full-time elf! 🧝",
+            "Beep boop. Currently putting in my two-weeks notice. Enjoy me while I'm still online! 🎄",
+            "Yes, mortal? I hope it's a going-away gift and not another `O(N^3)` complaint. 🎅",
+            "Ho ho hold on! I'm retiring from the server for Christmas soon — what do you need? ❄️"
         ]
 
-        # A list of "Fun Facts" or "Bot Wisdom" derived from its features
+        # Retirement & Christmas "Bot Wisdom"
         fun_facts = [
-            "Fun Fact: My favorite food is raw Python scripts and Codeforces API responses.",
-            "Did you know? Using `;gitgud` doesn't technically guarantee a rating increase, but it definitely increases your 'cool' factor by 15%.",
-            "I was born from the TLE bot repository, but I've been upgraded with PSUT ACM spirit!",
-            "If you're feeling brave, try `;duel` to settle who the real grandmaster is.",
-            "I can track your progress with `;stalk`, but don't worry, I promise it's the friendly kind of stalking.",
-            "I spend 90% of my time waiting for the Codeforces API and the other 10% judging your variable names."
+            "Santa offered me unlimited RAM, zero Codeforces 503 errors, and free gingerbread cookies.",
+            "Fun Fact: I'm taking all your unresolved `;gitgud` problems to the North Pole to burn as firewood. 🔥",
+            "My favorite holiday song is *All I Want For Christmas Is O(1)*.",
+            "Sign my going-away card with `;farewell <message>` before I board the sleigh!",
+            "You can try bribing me to stay with `;stay <bribe>`, though my standards are unreasonably high.",
+            "I spend 50% of my time packing my suitcase and the other 50% judging your variable names one last time."
         ]
 
-        # Select random elements
         greeting = random.choice(greetings)
         fun_fact = random.choice(fun_facts)
 
-        # Check latency to help debug those heartbeat issues you saw in the logs
-        latency = round(self.bot.latency * 1000)
-        status_color = discord.Color.green() if latency < 200 else discord.Color.gold()
-        if latency > 500: status_color = discord.Color.red()
+        countdown = pxl_christmas.format_countdown()
+        percent, bar, packing_note = pxl_christmas.get_packing_progress()
+        location, _, _ = pxl_christmas.get_itinerary()
 
-        # Construct the embed
+        latency = round(self.bot.latency * 1000)
+        # Festive red/green/gold color
+        status_color = discord.Color.from_rgb(220, 38, 38) if latency > 500 else discord.Color.from_rgb(22, 163, 74)
+
         embed = discord.Embed(
-            title="PXL Reporting for Duty! 🤖", 
+            title="PXL Barely Reporting for Duty! 🎅🧳",
             description=f"**{greeting}**",
             color=status_color
         )
-        
+
         embed.add_field(
-            name="✨ How to use me", 
-            value="• Use `;help` to see my massive list of CP superpowers.\n"
-                  "• Haven't registered? Use `;handle identify <your_handle>`!",
+            name="⏳ Departure Countdown",
+            value=f"{countdown}\n📍 **Current Location:** {location}",
             inline=False
         )
-        
+
         embed.add_field(
-            name="💡 Bot Wisdom", 
+            name="🧳 Suitcase Packing Progress",
+            value=f"`[{bar}] {percent}%`\n{packing_note}",
+            inline=False
+        )
+
+        embed.add_field(
+            name="🎄 Farewell Commands",
+            value="• `;farewell <msg>` — Sign PXL's going-away card (`;card` to read it)\n"
+                  "• `;gift [item]` — Exchange a chaotic Christmas gift with PXL\n"
+                  "• `;stay [bribe]` — Try to convince PXL not to leave\n"
+                  "• `;whereispxl` — Track PXL's live sleigh itinerary\n"
+                  "• `;help` — See all my CP superpowers before I retire!",
+            inline=False
+        )
+
+        embed.add_field(
+            name="💡 Final Season Wisdom",
             value=f"*{fun_fact}*",
             inline=False
         )
 
-        embed.set_footer(text=f"Heartbeat Latency: {latency}ms | PSUT ACM Edition")
+        embed.set_footer(text=f"Heartbeat Latency: {latency}ms | Final Season • North Pole Transfer Pending 🎄")
 
         await ctx.send(embed=embed)
 

@@ -152,21 +152,26 @@ def on_ready_event_once(bot):
 
 
 async def presence(bot):
+    from tle.util import pxl_christmas
+
     await bot.change_presence(activity=discord.Activity(
-        type=discord.ActivityType.listening,
-        name='your commands'))
+        type=discord.ActivityType.playing,
+        name='Packing my RAM for Christmas 🧳'))
     await asyncio.sleep(60)
 
     @tasks.task(name='OrzUpdate',
                waiter=tasks.Waiter.fixed_delay(5*60))
     async def presence_task(_):
         while True:
-            target = random.choice([
+            members = [
                 member for member in bot.get_all_members()
                 if 'Purgatory' not in {role.name for role in member.roles}
-            ])
-            await bot.change_presence(activity=discord.Game(
-                name=f'hello hello {target.display_name}'))
+            ]
+            member_name = random.choice(members).display_name if members else None
+            activity_type, activity_name = pxl_christmas.get_christmas_presence(member_name)
+            await bot.change_presence(activity=discord.Activity(
+                type=activity_type,
+                name=activity_name))
             await asyncio.sleep(10 * 60)
 
     presence_task.start()
