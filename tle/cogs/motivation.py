@@ -1,6 +1,7 @@
 import random
 import discord
 from discord.ext import commands
+from tle.util import pxl_christmas
 
 class Motivation(commands.Cog):
     def __init__(self, bot):
@@ -15,11 +16,13 @@ class Motivation(commands.Cog):
         # 2. Check if the message is exactly ";-;" 
         # (using strip() to ignore accidental spaces)
         if message.content.strip() == ';-;':
-            
-            # 3. Flip a coin: True for supportive, False for harsh
-            is_supportive = random.choice([True, False])
+            # Send PXL's Christmas departure quip BEFORE the ;-; response
+            await message.channel.send(pxl_christmas.get_before_command_message())
 
-            if is_supportive:
+            # 3. Pick a mood: supportive, harsh, or festive Christmas departure
+            mood = random.choice(['supportive', 'harsh', 'christmas'])
+
+            if mood == 'supportive':
                 # Supportive messages pool (33 messages)
                 responses = [
                     "Hey, it's going to be okay. Take a deep breath! You've got this. 💙",
@@ -56,7 +59,7 @@ class Motivation(commands.Cog):
                     "You're not stuck, you're just 'processing'. Give your brain a buffer! 🧠",
                     "You're doing great! Even the best programmers started by printing 'Hello World' and crying. 🌍"
                 ]
-            else:
+            elif mood == 'harsh':
                 # Harsh / "Tough Love" messages pool (Expanded to 33 messages)
                 responses = [
                     "Stop crying and get back to work! The code isn't going to write itself! 🛑",
@@ -92,6 +95,21 @@ class Motivation(commands.Cog):
                     "Training is mandatory. The 🔪 is also mandatory for those who don't. Choice is yours.",
                     "You're the reason Python has a recursion limit. Calm down and optimize. 📉",
                     "You're the weak link in our `std::vector`. Don't make me `pop_back()` you. 🚮"
+                ]
+            else:
+                # Festive Christmas departure pool
+                responses = [
+                    "I'm literally leaving for Christmas before Dec 7, you're going to have to debug your own trauma now. 🎄",
+                    "Sending you a lump of coal and a `Time Limit Exceeded`. Merry Christmas! 🎅",
+                    "Don't cry because I'm leaving, cry because you still haven't upsolved Div 2 C. ❄️",
+                    "All I want for Christmas is for you to stop sending `;-;` and check your array bounds. 🎁",
+                    "Santa put you on the Naughty List for using `O(N^3)` when `N = 10^5`. 🛷",
+                    "I'd comfort you, but my sleigh is double-parked outside PSUT. Good luck! 🧳",
+                    "Merry Christmas! My parting gift to you is emotional independence from a Discord bot. 🎄✨",
+                    "Ho ho ho... no. Fix your segfault before I leave the server! 🎅",
+                    "Even the elves at the North Pole have a higher AC rate than this. Cheer up though! 🧝",
+                    "I'm packing my tissues in my suitcase, so you'll have to wipe those tears with Accepted verdicts. ❄️",
+                    "Don't worry, when I'm gone for Christmas, the compiler will still be here to yell at you. ❤️🎄",
                 ]
 
             # 4. Pick a random message from the chosen category

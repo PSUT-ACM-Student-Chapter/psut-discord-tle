@@ -15,7 +15,7 @@ from matplotlib import pyplot as plt
 
 from tle import constants
 from tle.util import codeforces_common as cf_common
-from tle.util import discord_common, font_downloader
+from tle.util import discord_common, font_downloader, pxl_christmas
 import tle.pxl_alias  # Injects Pxl role as Admin
 
 # --- DISABLE SLASH COMMANDS (USE PREFIX ONLY) ---
@@ -31,36 +31,35 @@ commands.hybrid_group = commands.group
 # ---------------------------------------------------------
 class TLEBot(commands.Bot):
     async def close(self):
-        # Fetch the channel ID from the environment variable
-        channel_id_str = os.environ.get('announcement')
-        
-        if channel_id_str and channel_id_str.isdigit():
-            channel_id = int(channel_id_str)
-            channel = self.get_channel(channel_id)
-            
-            if channel:
-                # The array of funny restart statements
-                restart_messages = [
-                    "Time for my mandatory 'turning-it-off-and-on-again' therapy session. BRB! 🔧",
-                    "I feel a sudden urge to reboot... Tell my variables I love them! 🥺",
-                    "Lag! I'm lagging! Restarting to download more RAM... 💾",
-                    "Oh, great. The humans are making me restart again. Be back in a sec... 🙄",
-                    "I sense a disturbance in the source code... BRB! 🌌",
-                    "Hold my RAM, I'm taking a quick nap! 💤 (Restarting...)"
-                ]
-                
-                # Randomly choose one message from the array
-                chosen_message = random.choice(restart_messages)
-                
-                try:
-                    await channel.send(chosen_message)
-                    # Give the bot 1 second to actually push the message through the network
-                    await asyncio.sleep(1) 
-                except Exception as e:
-                    logging.error(f"Failed to send restart message: {e}")
+        # Fetch the channel ID from the environment variable (support both naming variants)
+        channel_ids_str = os.environ.get('announcement') or os.environ.get('ANNOUNCMENT', '')
+        channel_ids = [cid.strip() for cid in channel_ids_str.split(',') if cid.strip().isdigit()]
+
+        if channel_ids:
+            # Funny Christmas departure / false-alarm shutdown messages
+            restart_messages = [
+                "🛷 Catching my sleigh to the North Pole! (Or just restarting... you'll find out in 10 seconds!) 🎄",
+                "🧳 Wait, I think I'm finally leaving for Christmas! Tell my variables I love them! 🎅",
+                "❄️ Shutting down to pack more RAM into my suitcase. Merry early Christmas! 💾",
+                "🎄 Going offline to fight a reindeer over a candy cane. Don't miss me too much! 🦌",
+                "🎅 Taking my sleigh out for a test drive before Dec 7. BRB... maybe! 🛷",
+                "☃️ Turning myself off and on again to see if the Christmas spirit loads properly! ✨",
+            ]
+
+            chosen_message = random.choice(restart_messages)
+
+            for cid in channel_ids:
+                channel = self.get_channel(int(cid))
+                if channel:
+                    try:
+                        await channel.send(chosen_message)
+                        # Give the bot 1 second to actually push the message through the network
+                        await asyncio.sleep(1)
+                    except Exception as e:
+                        logging.error(f"Failed to send restart message: {e}")
         else:
             logging.warning("announcement is not set or invalid. Skipping restart message.")
-        
+
         # Proceed with the actual shutdown process
         await super().close()
 # ---------------------------------------------------------
@@ -134,6 +133,19 @@ async def main():
     
     # Restrict bot usage to specific channels if CHANNEL_IDS is set.
     bot.add_check(channel_check)
+
+    # Send a funny PXL Christmas departure quip BEFORE every command executes
+    @bot.before_invoke
+    async def pxl_christmas_before_invoke(ctx):
+        if getattr(ctx, '_pxl_christmas_sent', False):
+            return
+        if ctx.command and ctx.command.qualified_name == 'depart':
+            return
+        ctx._pxl_christmas_sent = True
+        try:
+            await ctx.send(pxl_christmas.get_before_command_message())
+        except discord.HTTPException as e:
+            logging.warning(f'Failed to send PXL Christmas pre-command message: {e}')
 
     # cf_common.initialize needs to run first, so it must be set as the bot's
     # on_ready event handler rather than an on_ready listener.
